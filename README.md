@@ -12,16 +12,29 @@ dados abertos do BCB.
 
 ## Como usar
 
+**Arquivo único — sem instalar nada.** `ifdata-analytics.html` contém o sistema
+inteiro (HTML, CSS e JavaScript no mesmo arquivo). Dá para abrir com dois
+cliques, mandar por e-mail ou guardar no drive da equipe.
+
+**Servido por HTTP — recomendado para consultar o BCB.**
+
 ```bash
 python3 serve.py          # abre http://localhost:8000 no navegador
 ```
 
-Abrir o `index.html` com dois cliques também funciona na maioria dos casos, mas
-alguns navegadores tratam a origem `file://` com mais rigor e bloqueiam a
-chamada ao BCB — servir por HTTP evita esse problema.
+Alguns navegadores tratam a origem `file://` com mais rigor e bloqueiam a
+chamada à API do BCB; servido por HTTP isso não acontece. Publicar a pasta em
+qualquer hospedagem estática (GitHub Pages, por exemplo) tem o mesmo efeito e
+dá um endereço que funciona em celular e tablet.
 
 Sem rede? A chave **Demonstração** na barra superior liga um conjunto de dados
 sintéticos que exercita toda a interface (sempre sinalizado como fictício).
+
+Depois de mexer em qualquer arquivo de `assets/`, regenere o arquivo único:
+
+```bash
+python3 build/gerar-arquivo-unico.py
+```
 
 ---
 
@@ -134,7 +147,9 @@ reabrir a mesma consulta é instantâneo.
 
 ```
 index.html                  casca da página
+ifdata-analytics.html       o sistema inteiro num arquivo só (gerado)
 serve.py                    servidor local estático
+build/gerar-arquivo-unico.py  inlina assets/ dentro de um único HTML
 assets/css/app.css          tokens de cor, tema claro/escuro, layout
 assets/js/
   util.js                   formatação pt-BR, períodos, estatística, exportação
