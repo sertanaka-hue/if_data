@@ -1,1 +1,177 @@
-# if_data
+# IF.data Analytics
+
+Sistema em HTML para **consultar, agregar e analisar graficamente** os dados do
+[IF.data](https://www3.bcb.gov.br/ifdata/) — o relatório trimestral de dados
+selecionados das instituições financeiras do Banco Central do Brasil.
+
+Roda inteiramente no navegador: **não há servidor, backend, build nem
+dependência externa**. As consultas vão direto do seu navegador para a API de
+dados abertos do BCB.
+
+---
+
+## Como usar
+
+```bash
+python3 serve.py          # abre http://localhost:8000 no navegador
+```
+
+Abrir o `index.html` com dois cliques também funciona na maioria dos casos, mas
+alguns navegadores tratam a origem `file://` com mais rigor e bloqueiam a
+chamada ao BCB — servir por HTTP evita esse problema.
+
+Sem rede? A chave **Demonstração** na barra superior liga um conjunto de dados
+sintéticos que exercita toda a interface (sempre sinalizado como fictício).
+
+---
+
+## As sete telas
+
+| Tela | O que entrega |
+|---|---|
+| **Consulta** | Ranking e tabela completa de qualquer relatório, com filtro por UF e segmento, seletor de colunas e exportação CSV. |
+| **Comparar** | Até oito instituições lado a lado em várias colunas; escala em nível ou indexada (maior = 100) e matriz de posição relativa por indicador (escore-z). |
+| **Série temporal** | Evolução trimestral de uma coluna ou indicador: nível, série indexada em base 100 e variação em 12 meses, com CAGR, volatilidade e extremos. |
+| **Conjuntos** | Monta carteiras de instituições (peers, blocos, concorrentes), salvas no navegador, com sugestões automáticas por faixa de tamanho e importação/exportação em JSON. |
+| **Análise de conjunto** | Agrega o conjunto, recalcula os índices, compara conjuntos entre si e com o sistema, mostra composição interna, dispersão dos membros e decomposição da variação por membro. |
+| **Mercado & concentração** | Participação de mercado, HHI, CR5/CR10, Gini, curva de concentração acumulada e HHI comparado entre mercados. |
+| **Diagnóstico** | Estado da conexão, forma do retorno, registro bruto da API, detecção de períodos e ajuste manual do mapeamento de campos. |
+
+Todo gráfico tem uma aba **Tabela** com os mesmos números e botões **PNG/SVG** —
+nenhum valor fica acessível só por *hover*.
+
+---
+
+## Fonte dos dados
+
+Endpoint OData do portal de dados abertos do BCB:
+
+```
+https://olinda.bcb.gov.br/olinda/servico/IFDATA/versao/v1/odata
+```
+
+| Recurso | Uso |
+|---|---|
+| `ListaDeRelatorio` | Descobre os relatórios disponíveis (com catálogo interno de reserva). |
+| `IfDataCadastro(AnoMes,TipoInstituicao)` | Cadastro das instituições do período. |
+| `IfDataValores(AnoMes,TipoInstituicao,Relatorio)` | Valores de cada coluna do relatório. |
+
+Os dados são trimestrais (`AnoMes` = `AAAAMM`, com mês 03, 06, 09 ou 12) e
+publicados cerca de 60 dias após o fechamento de março, junho e setembro, e 90
+dias após dezembro. A lista de trimestres da barra superior já aplica essa
+defasagem; **Diagnóstico → Detectar períodos** confirma o que realmente existe
+para o relatório e o tipo escolhidos.
+
+### Descoberta de schema em tempo de execução
+
+O `IfDataValores` não devolve sempre o mesmo formato: em alguns relatórios cada
+linha é uma instituição com uma coluna por conta ("largo"), em outros cada linha
+é uma conta ("longo"). E os rótulos das colunas mudam entre períodos.
+
+Por isso o cliente (`assets/js/api.js`) **detecta a forma do retorno e converte
+tudo para o formato largo**, e o catálogo (`assets/js/catalog.js`) casa as
+colunas reais contra ~25 campos canônicos por correspondência normalizada
+(exata → prefixo → termos). Nada de nomes de coluna cravados no código.
+
+Quando a detecção erra, **Diagnóstico → Mapeamento de campos** deixa você apontar
+manualmente cada campo canônico para a coluna certa, e todas as telas recalculam.
+
+---
+
+## Decisões analíticas
+
+Três pontos em que a leitura ingênua do dado leva a número errado:
+
+**1. A DRE do IF.data é acumulada no ano.** O lucro do 3T é o acumulado de
+janeiro a setembro. O interruptor **Anualizar resultados** (ligado por padrão)
+multiplica os resultados por `12 ÷ mês`, para que ROE e ROA de trimestres
+diferentes sejam comparáveis. Desligue para ler o acumulado como publicado.
+
+**2. Índice não soma nem tira média simples.** Ao agregar um conjunto, saldos e
+fluxos são somados e os índices são **recalculados a partir dos componentes
+agregados** (Basileia = ΣPR ÷ ΣRWA, e assim por diante). Quando o relatório em
+tela não traz os componentes, cai-se para média ponderada pelo ativo — e a tela
+diz explicitamente quais índices ficaram aproximados.
+
+**3. Escala.** O IF.data publica os saldos em **R$ mil**. O seletor *Escala dos
+valores* converte para reais ou para R$ milhões; índices e contagens nunca são
+reescalados.
+
+### Indicadores calculados
+
+Rentabilidade — ROE, ROA, margem líquida, índice de eficiência.
+Capital — Basileia, Capital Principal, Nível I, razão de alavancagem,
+alavancagem contábil, PL/Ativo, densidade de RWA, imobilização.
+Crédito e liquidez — Crédito/Ativo, Crédito/Captações (LDR), Provisão/Carteira,
+custo do crédito.
+Concentração — participação de mercado, HHI, CR*n*, Gini, curva acumulada.
+
+Cada indicador declara os campos de que precisa; a tela só oferece os que o
+relatório carregado consegue sustentar. **Diagnóstico** lista quais estão
+disponíveis e por quê.
+
+---
+
+## Se a consulta falhar
+
+O sintoma quase sempre é `Failed to fetch`. Em ordem de probabilidade:
+
+1. **Rede corporativa** bloqueando `olinda.bcb.gov.br`. Teste em
+   Diagnóstico → Testar conexão; se houver um espelho interno do endpoint,
+   aponte a **Base da API** para ele.
+2. **Página aberta como `file://`** — use `python3 serve.py`.
+3. **Período sem publicação** para aquele relatório: a consulta responde, mas
+   vazia. Use Detectar períodos.
+4. **Indisponibilidade do BCB** — o cliente já repete requisições 5xx com espera
+   progressiva; o botão *Atualizar* refaz tudo ignorando o cache.
+
+Respostas ficam em cache no navegador por até 14 dias (`localStorage`), então
+reabrir a mesma consulta é instantâneo.
+
+---
+
+## Estrutura
+
+```
+index.html                  casca da página
+serve.py                    servidor local estático
+assets/css/app.css          tokens de cor, tema claro/escuro, layout
+assets/js/
+  util.js                   formatação pt-BR, períodos, estatística, exportação
+  catalog.js                campos canônicos, indicadores, regras de agregação
+  api.js                    cliente Olinda: paginação, cache, retentativa, pivot
+  demo.js                   gerador de dados sintéticos (modo demonstração)
+  charts.js                 motor SVG próprio: ranking, colunas, linhas,
+                            dispersão, heatmap, waterfall, sparkline
+  ui.js                     multiselect, cards, modais, stat tiles, toasts
+  table.js                  tabela com ordenação, busca e exportação CSV
+  store.js                  estado e persistência dos conjuntos
+  views-core.js             carga de dados, escala, guarda de render
+  views-dados.js            Consulta, Comparar, Série temporal
+  views-analise.js          Conjuntos, Análise de conjunto, Mercado, Diagnóstico
+  app.js                    filtros globais, abas, tema
+```
+
+### Notas de desenho
+
+A paleta categórica de oito séries foi validada para contraste e para as três
+formas de daltonismo; a cor **segue a entidade**, não a posição no ranking — o
+Banco X mantém o mesmo azul em todos os gráficos e filtrar séries não repinta as
+demais. Escalas sequenciais usam um único tom, e a divergente usa dois polos com
+cinza neutro no meio. Nenhum gráfico tem dois eixos verticais: grandezas
+diferentes viram *small multiples* ou série indexada. Rótulos diretos são
+seletivos e desaparecem quando colidiriam — a legenda, o crosshair e a aba
+Tabela cobrem o resto.
+
+---
+
+## Limitação conhecida
+
+O ambiente onde este sistema foi construído não tem acesso de rede a
+`olinda.bcb.gov.br`. Toda a lógica foi exercitada e conferida contra o modo
+demonstração em navegador real, e o cliente foi escrito para se adaptar às duas
+formas conhecidas de retorno do `IfDataValores` — mas a **primeira execução
+contra a API real deve ser feita pela tela Diagnóstico**, que mostra a URL
+consultada, a forma detectada e o primeiro registro bruto. Se algum rótulo de
+coluna não bater com o esperado, o ajuste é no Mapeamento de campos, sem tocar
+em código.
