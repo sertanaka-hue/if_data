@@ -183,8 +183,11 @@
 
   function avisoDemo(dataset) {
     if (!dataset || !dataset.demo) return null;
+    var comoSair = global.IFDATA_FORCAR_DEMO
+      ? 'Esta cópia não tem como consultar o Banco Central: para dados reais, abra o sistema pelo endereço onde ele está hospedado.'
+      : 'Troque para "API do BCB" na barra superior para consultar dados reais.';
     return UI.nota('Modo demonstração: os números são sintéticos e servem apenas para explorar a interface. ' +
-      'Troque para "API do BCB" na barra superior para consultar dados reais.', 'warn');
+      comoSair, 'warn');
   }
 
   function avisoCampos(dataset) {

@@ -36,10 +36,12 @@
     var ferramentas = U.el('div', { class: 'topbar__tools' });
     refs.badge = U.el('span', { class: 'badge', text: '—' });
     ferramentas.appendChild(refs.badge);
-    ferramentas.appendChild(UI.segmentado([
-      { label: 'API do BCB', value: 'live', hint: 'Consulta olinda.bcb.gov.br em tempo real' },
-      { label: 'Demonstração', value: 'demo', hint: 'Dados sintéticos, sem rede' }
-    ], ST.estado.modo === 'demo' ? 'demo' : 'live', definirModo));
+    if (!global.IFDATA_FORCAR_DEMO) {
+      ferramentas.appendChild(UI.segmentado([
+        { label: 'API do BCB', value: 'live', hint: 'Consulta olinda.bcb.gov.br em tempo real' },
+        { label: 'Demonstração', value: 'demo', hint: 'Dados sintéticos, sem rede' }
+      ], ST.estado.modo === 'demo' ? 'demo' : 'live', definirModo));
+    }
 
     var temaAtual = document.documentElement.getAttribute('data-theme') || 'sistema';
     ferramentas.appendChild(UI.seletor([
@@ -207,6 +209,11 @@
     var prefs = ST.carregarPrefs();
     ST.carregarGrupos();
     if (!ST.estado.escala) ST.estado.escala = 1;
+    // Alguns ambientes de publicação bloqueiam qualquer chamada a domínio
+    // externo. Quem hospeda a página nesse tipo de ambiente define esta
+    // variável antes dos scripts: a interface trava no modo demonstração em
+    // vez de oferecer um botão "API do BCB" que só falharia.
+    if (global.IFDATA_FORCAR_DEMO) ST.estado.modo = 'demo';
     if (prefs && prefs.tema && prefs.tema !== 'sistema') {
       document.documentElement.setAttribute('data-theme', prefs.tema);
     }
