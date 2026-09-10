@@ -79,17 +79,26 @@
       .then(function (r) {
         if (timer) clearTimeout(timer);
         if (!r.ok) {
-          var err = new Error('HTTP ' + r.status + ' ' + r.statusText);
-          err.status = r.status;
-          throw err;
+          // O Olinda explica no corpo da resposta o que recusou ("parâmetro
+          // inválido", "obrigatório"...). Descartar isso é jogar fora a única
+          // pista útil de um 400.
+          return r.text().catch(function () { return ''; }).then(function (corpo) {
+            var err = new Error('HTTP ' + r.status + ' ' + r.statusText +
+              (corpo ? ' — ' + String(corpo).replace(/\s+/g, ' ').trim().slice(0, 300) : ''));
+            err.status = r.status;
+            err.corpo = corpo;
+            throw err;
+          });
         }
         return r.json();
       })
       .catch(function (e) {
         if (timer) clearTimeout(timer);
-        // 5xx e timeouts merecem várias tentativas; falha de rede/CORS quase
-        // nunca melhora ao repetir, então só uma retentativa curta.
-        var maxTentativas = (e.status >= 500 || e.name === 'AbortError') ? 3 : 1;
+        // 5xx e timeouts merecem várias tentativas. Um 4xx é recusa do
+        // servidor ao próprio pedido: repetir só gasta tempo. Falha de rede ou
+        // CORS raramente melhora, mas ganha uma segunda chance curta.
+        var maxTentativas = (e.status >= 500 || e.name === 'AbortError') ? 3
+                          : (e.status >= 400 && e.status < 500) ? 0 : 1;
         if (t < maxTentativas) {
           var espera = Math.pow(2, t) * 700;
           return new Promise(function (res) { setTimeout(res, espera); })
@@ -305,6 +314,55 @@
     });
   }
 
+  /**
+   * O IfDataCadastro recusou (HTTP 400) a assinatura documentada, e sem acesso
+   * à API não dá para saber qual variante ele aceita. Em vez de apostar numa,
+   * enumeramos as plausíveis e usamos a primeira que responder com dados — a
+   * escolha fica guardada na sessão para não repetir a busca a cada período.
+   */
+  function candidatosCadastro(anoMes, tipo) {
+    var raiz = state.base + '/IfDataCadastro';
+    var assinatura = '(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)';
+    var comAspas = function (v) { return "'" + v + "'"; };
+    var lista = [];
+    [[String(anoMes), String(tipo)],
+     [String(anoMes), comAspas(tipo)],
+     [comAspas(anoMes), String(tipo)],
+     [comAspas(anoMes), comAspas(tipo)]].forEach(function (par) {
+      lista.push({
+        rotulo: 'AnoMes=' + par[0] + ', TipoInstituicao=' + par[1],
+        url: raiz + assinatura + '?@AnoMes=' + encodeURIComponent(par[0]) +
+             '&@TipoInstituicao=' + encodeURIComponent(par[1])
+      });
+    });
+    lista.push({ rotulo: 'somente AnoMes',
+      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(anoMes) });
+    lista.push({ rotulo: 'somente AnoMes entre aspas',
+      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent("'" + anoMes + "'") });
+    lista.push({ rotulo: 'sem parâmetros', url: raiz });
+    return lista;
+  }
+
+  /** Testa cada assinatura com $top=1 e devolve o que cada uma respondeu. */
+  function sondarCadastro(anoMes, tipo) {
+    var candidatos = candidatosCadastro(anoMes, tipo);
+    var resultados = [];
+    function passo(i) {
+      if (i >= candidatos.length) return Promise.resolve(resultados);
+      var c = candidatos[i];
+      var url = c.url + (c.url.indexOf('?') >= 0 ? '&' : '?') + '$top=1&$format=json';
+      return getJSON(url).then(function (json) {
+        var v = (json && json.value) || [];
+        resultados.push({ rotulo: c.rotulo, url: url, ok: true, registros: v.length,
+                          chaves: v[0] ? Object.keys(v[0]) : [], exemplo: v[0] || null });
+      }).catch(function (e) {
+        resultados.push({ rotulo: c.rotulo, url: url, ok: false,
+                          erro: (e && e.message) || String(e) });
+      }).then(function () { return passo(i + 1); });
+    }
+    return passo(0);
+  }
+
   /** Cadastro (instituições) de um período.
       O parâmetro TipoInstituicao aparece ora numérico, ora entre aspas, conforme
       o serviço — em vez de apostar numa forma, tentamos as duas. */
@@ -317,18 +375,33 @@
       return Promise.resolve(d);
     }
 
-    var formas = [urlCadastro(anoMes, tipo), urlCadastro(anoMes, tipo, true)];
+    var candidatos = candidatosCadastro(anoMes, tipo);
+    // assinatura já descoberta nesta sessão: vai direto nela
+    if (U.isNum(state.assinaturaCadastro)) {
+      candidatos = [candidatos[state.assinaturaCadastro]].concat(candidatos);
+    }
+
     function tentar(i, ultimoErro) {
-      if (i >= formas.length) throw (ultimoErro || new Error('cadastro indisponível'));
-      return getTodos(formas[i])
+      if (i >= candidatos.length) {
+        state.cadastroIndisponivel = true;
+        throw (ultimoErro || new Error('nenhuma assinatura do IfDataCadastro respondeu'));
+      }
+      var c = candidatos[i];
+      // primeiro com paginação; se o serviço recusar $top/$skip, sem eles
+      return getTodos(c.url)
+        .catch(function () { return getJSON(comFormato(c.url)).then(function (j) { return (j && j.value) || []; }); })
         .then(function (v) {
-          if (!v.length && i + 1 < formas.length) return tentar(i + 1, ultimoErro);
+          if (!v.length) throw new Error('resposta vazia');
           memCache.set(chave, v);
-          state.urlCadastroUsada = formas[i];
+          state.urlCadastroUsada = c.url;
+          state.assinaturaCadastro = candidatosCadastro(anoMes, tipo)
+            .findIndex(function (x) { return x.rotulo === c.rotulo; });
+          state.cadastroIndisponivel = false;
           return v;
         })
         .catch(function (e) { return tentar(i + 1, e); });
     }
+
     return Promise.resolve().then(function () { return tentar(0, null); });
   }
 
@@ -555,7 +628,7 @@
     testar: testar,
     periodosDisponiveis: periodosDisponiveis,
     limparCache: limparCache,
-    normalizar: normalizar, pareceCodigo: pareceCodigo,
+    normalizar: normalizar, pareceCodigo: pareceCodigo, sondarCadastro: sondarCadastro,
     urlValores: urlValores,
     urlCadastro: urlCadastro,
     on: on

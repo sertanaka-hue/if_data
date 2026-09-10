@@ -823,6 +823,57 @@
         ]));
         node.appendChild(cPer.node);
 
+        /* --- sondagem do cadastro --------------------------------------------- */
+        var cSonda = UI.card({ titulo: 'Sondagem do IfDataCadastro',
+          sub: 'De onde vêm os nomes das instituições. Se o painel mostra códigos, teste aqui ' +
+               'qual formato de endereço o Banco Central aceita.' });
+        var saidaSonda = U.el('div');
+        cSonda.corpo.appendChild(U.el('div', { class: 'stack' }, [
+          U.el('div', { class: 'row' }, [
+            U.el('button', { class: 'btn btn--primary', text: 'Sondar formatos de endereço',
+              onclick: function () {
+                var botao = this;
+                var c = VW.ctx();
+                botao.disabled = true;
+                U.clear(saidaSonda).appendChild(UI.carregando('Testando cada formato…'));
+                API.sondarCadastro(c.anoMes, c.tipo).then(function (res) {
+                  ultimaSondagem = res;
+                  botao.disabled = false;
+                  U.clear(saidaSonda);
+                  var vencedor = res.find(function (r) { return r.ok && r.registros; });
+                  saidaSonda.appendChild(UI.nota(vencedor
+                    ? 'Formato aceito: "' + vencedor.rotulo + '". Recarregue o painel — os nomes devem aparecer.'
+                    : 'Nenhum dos formatos testados devolveu dados. Use "Copiar diagnóstico" e envie o resultado.',
+                    vencedor ? 'good' : 'bad'));
+                  var alvoSonda = U.el('div');
+                  saidaSonda.appendChild(alvoSonda);
+                  TBL.render(alvoSonda, {
+                    columns: [
+                      { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 260 },
+                      { key: 'resultado', label: 'Resposta', largura: 340 },
+                      { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 },
+                      { key: 'chaves', label: 'Colunas devolvidas', largura: 320 }
+                    ],
+                    rows: res.map(function (r) {
+                      return { rotulo: r.rotulo,
+                               resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
+                               registros: r.ok ? r.registros : null,
+                               chaves: (r.chaves || []).join(', ') };
+                    }),
+                    busca: false, nomeArquivo: 'sondagem-cadastro'
+                  });
+                }).catch(function (e) {
+                  botao.disabled = false;
+                  U.clear(saidaSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
+                });
+              } }),
+            U.el('span', { class: 'small muted',
+              text: 'Sete formatos, um pedido pequeno cada. Não altera nada.' })
+          ]),
+          saidaSonda
+        ]));
+        node.appendChild(cSonda.node);
+
         /* --- forma do retorno --------------------------------------------------- */
         if (ds) {
           var cForma = UI.card({ titulo: 'Retorno do relatório em tela',
@@ -941,6 +992,8 @@
 
   /* ---------------- apoio da tela de Diagnóstico ---------------------- */
 
+  var ultimaSondagem = null;
+
   function textoCadastro(ds) {
     var c = ds.cadastro;
     if (!c) return 'cruzamento com o cadastro não executado';
@@ -973,7 +1026,8 @@
       },
       identificacaoResultante: ds.rows.slice(0, 3).map(function (r) {
         return { codigo: r.__id, nome: r.__nome };
-      })
+      }),
+      sondagemDoCadastro: ultimaSondagem
     };
     var texto = JSON.stringify(resumo, null, 2);
     function feito() {
