@@ -70,10 +70,11 @@
     return url + (url.indexOf('?') >= 0 ? '&' : '?') + '$format=json';
   }
 
-  function getJSON(url, tentativa) {
+  function getJSON(url, tentativa, timeoutMs) {
     var t = tentativa || 0;
+    var limite = timeoutMs || state.timeoutMs;
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, state.timeoutMs) : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, limite) : null;
     return fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit',
                         signal: ctrl ? ctrl.signal : undefined })
       .then(function (r) {
@@ -102,7 +103,7 @@
         if (t < maxTentativas) {
           var espera = Math.pow(2, t) * 700;
           return new Promise(function (res) { setTimeout(res, espera); })
-            .then(function () { return getJSON(url, t + 1); });
+            .then(function () { return getJSON(url, t + 1, timeoutMs); });
         }
         e.url = url;
         throw e;
@@ -322,25 +323,42 @@
    */
   function candidatosCadastro(anoMes, tipo) {
     var raiz = state.base + '/IfDataCadastro';
-    var assinatura = '(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)';
-    var comAspas = function (v) { return "'" + v + "'"; };
+    var aspas = function (v) { return "'" + v + "'"; };
     var lista = [];
+
+    // A documentação do BCB exemplifica o cadastro SÓ com AnoMes — essa vem primeiro.
+    lista.push({ rotulo: 'somente AnoMes',
+      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(anoMes) });
+    lista.push({ rotulo: "somente AnoMes entre aspas",
+      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(aspas(anoMes)) });
+
+    var assinatura = '(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)';
     [[String(anoMes), String(tipo)],
-     [String(anoMes), comAspas(tipo)],
-     [comAspas(anoMes), String(tipo)],
-     [comAspas(anoMes), comAspas(tipo)]].forEach(function (par) {
+     [String(anoMes), aspas(tipo)],
+     [aspas(anoMes), String(tipo)],
+     [aspas(anoMes), aspas(tipo)]].forEach(function (par) {
       lista.push({
         rotulo: 'AnoMes=' + par[0] + ', TipoInstituicao=' + par[1],
         url: raiz + assinatura + '?@AnoMes=' + encodeURIComponent(par[0]) +
              '&@TipoInstituicao=' + encodeURIComponent(par[1])
       });
     });
-    lista.push({ rotulo: 'somente AnoMes',
-      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(anoMes) });
-    lista.push({ rotulo: 'somente AnoMes entre aspas',
-      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent("'" + anoMes + "'") });
+
     lista.push({ rotulo: 'sem parâmetros', url: raiz });
     return lista;
+  }
+
+  /* Cada assinatura é tentada em três modos de leitura, do mais simples ao mais
+     exigente: serviços do Olinda às vezes aceitam a consulta mas recusam $skip,
+     e pedir paginação de saída transformava uma assinatura boa em erro 400. */
+  function lerCadastro(url) {
+    var sep = url.indexOf('?') >= 0 ? '&' : '?';
+    var simples = url + sep + '$format=json';
+    var comTop = url + sep + '$top=10000&$format=json';
+    function valores(json) { return (json && json.value) || []; }
+    return getJSON(simples, 0, 25000).then(valores)
+      .catch(function () { return getJSON(comTop, 0, 25000).then(valores); })
+      .catch(function () { return getTodos(url); });
   }
 
   /** Testa cada assinatura com $top=1 e devolve o que cada uma respondeu. */
@@ -350,8 +368,8 @@
     function passo(i) {
       if (i >= candidatos.length) return Promise.resolve(resultados);
       var c = candidatos[i];
-      var url = c.url + (c.url.indexOf('?') >= 0 ? '&' : '?') + '$top=1&$format=json';
-      return getJSON(url).then(function (json) {
+      var url = c.url + (c.url.indexOf('?') >= 0 ? '&' : '?') + '$format=json';
+      return getJSON(url, 0, 20000).then(function (json) {
         var v = (json && json.value) || [];
         resultados.push({ rotulo: c.rotulo, url: url, ok: true, registros: v.length,
                           chaves: v[0] ? Object.keys(v[0]) : [], exemplo: v[0] || null });
@@ -388,8 +406,7 @@
       }
       var c = candidatos[i];
       // primeiro com paginação; se o serviço recusar $top/$skip, sem eles
-      return getTodos(c.url)
-        .catch(function () { return getJSON(comFormato(c.url)).then(function (j) { return (j && j.value) || []; }); })
+      return lerCadastro(c.url)
         .then(function (v) {
           if (!v.length) throw new Error('resposta vazia');
           memCache.set(chave, v);

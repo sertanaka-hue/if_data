@@ -3272,10 +3272,11 @@ table.dt td.neg { color: var(--critical); }
     return url + (url.indexOf('?') >= 0 ? '&' : '?') + '$format=json';
   }
 
-  function getJSON(url, tentativa) {
+  function getJSON(url, tentativa, timeoutMs) {
     var t = tentativa || 0;
+    var limite = timeoutMs || state.timeoutMs;
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, state.timeoutMs) : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, limite) : null;
     return fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit',
                         signal: ctrl ? ctrl.signal : undefined })
       .then(function (r) {
@@ -3304,7 +3305,7 @@ table.dt td.neg { color: var(--critical); }
         if (t < maxTentativas) {
           var espera = Math.pow(2, t) * 700;
           return new Promise(function (res) { setTimeout(res, espera); })
-            .then(function () { return getJSON(url, t + 1); });
+            .then(function () { return getJSON(url, t + 1, timeoutMs); });
         }
         e.url = url;
         throw e;
@@ -3524,25 +3525,42 @@ table.dt td.neg { color: var(--critical); }
    */
   function candidatosCadastro(anoMes, tipo) {
     var raiz = state.base + '/IfDataCadastro';
-    var assinatura = '(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)';
-    var comAspas = function (v) { return "'" + v + "'"; };
+    var aspas = function (v) { return "'" + v + "'"; };
     var lista = [];
+
+    // A documentação do BCB exemplifica o cadastro SÓ com AnoMes — essa vem primeiro.
+    lista.push({ rotulo: 'somente AnoMes',
+      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(anoMes) });
+    lista.push({ rotulo: "somente AnoMes entre aspas",
+      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(aspas(anoMes)) });
+
+    var assinatura = '(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)';
     [[String(anoMes), String(tipo)],
-     [String(anoMes), comAspas(tipo)],
-     [comAspas(anoMes), String(tipo)],
-     [comAspas(anoMes), comAspas(tipo)]].forEach(function (par) {
+     [String(anoMes), aspas(tipo)],
+     [aspas(anoMes), String(tipo)],
+     [aspas(anoMes), aspas(tipo)]].forEach(function (par) {
       lista.push({
         rotulo: 'AnoMes=' + par[0] + ', TipoInstituicao=' + par[1],
         url: raiz + assinatura + '?@AnoMes=' + encodeURIComponent(par[0]) +
              '&@TipoInstituicao=' + encodeURIComponent(par[1])
       });
     });
-    lista.push({ rotulo: 'somente AnoMes',
-      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent(anoMes) });
-    lista.push({ rotulo: 'somente AnoMes entre aspas',
-      url: raiz + '(AnoMes=@AnoMes)?@AnoMes=' + encodeURIComponent("'" + anoMes + "'") });
+
     lista.push({ rotulo: 'sem parâmetros', url: raiz });
     return lista;
+  }
+
+  /* Cada assinatura é tentada em três modos de leitura, do mais simples ao mais
+     exigente: serviços do Olinda às vezes aceitam a consulta mas recusam $skip,
+     e pedir paginação de saída transformava uma assinatura boa em erro 400. */
+  function lerCadastro(url) {
+    var sep = url.indexOf('?') >= 0 ? '&' : '?';
+    var simples = url + sep + '$format=json';
+    var comTop = url + sep + '$top=10000&$format=json';
+    function valores(json) { return (json && json.value) || []; }
+    return getJSON(simples, 0, 25000).then(valores)
+      .catch(function () { return getJSON(comTop, 0, 25000).then(valores); })
+      .catch(function () { return getTodos(url); });
   }
 
   /** Testa cada assinatura com $top=1 e devolve o que cada uma respondeu. */
@@ -3552,8 +3570,8 @@ table.dt td.neg { color: var(--critical); }
     function passo(i) {
       if (i >= candidatos.length) return Promise.resolve(resultados);
       var c = candidatos[i];
-      var url = c.url + (c.url.indexOf('?') >= 0 ? '&' : '?') + '$top=1&$format=json';
-      return getJSON(url).then(function (json) {
+      var url = c.url + (c.url.indexOf('?') >= 0 ? '&' : '?') + '$format=json';
+      return getJSON(url, 0, 20000).then(function (json) {
         var v = (json && json.value) || [];
         resultados.push({ rotulo: c.rotulo, url: url, ok: true, registros: v.length,
                           chaves: v[0] ? Object.keys(v[0]) : [], exemplo: v[0] || null });
@@ -3590,8 +3608,7 @@ table.dt td.neg { color: var(--critical); }
       }
       var c = candidatos[i];
       // primeiro com paginação; se o serviço recusar $top/$skip, sem eles
-      return getTodos(c.url)
-        .catch(function () { return getJSON(comFormato(c.url)).then(function (j) { return (j && j.value) || []; }); })
+      return lerCadastro(c.url)
         .then(function (v) {
           if (!v.length) throw new Error('resposta vazia');
           memCache.set(chave, v);
@@ -5635,28 +5652,7 @@ table.dt td.neg { color: var(--critical); }
                   ultimaSondagem = res;
                   botao.disabled = false;
                   U.clear(saidaSonda);
-                  var vencedor = res.find(function (r) { return r.ok && r.registros; });
-                  saidaSonda.appendChild(UI.nota(vencedor
-                    ? 'Formato aceito: "' + vencedor.rotulo + '". Recarregue o painel — os nomes devem aparecer.'
-                    : 'Nenhum dos formatos testados devolveu dados. Use "Copiar diagnóstico" e envie o resultado.',
-                    vencedor ? 'good' : 'bad'));
-                  var alvoSonda = U.el('div');
-                  saidaSonda.appendChild(alvoSonda);
-                  TBL.render(alvoSonda, {
-                    columns: [
-                      { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 260 },
-                      { key: 'resultado', label: 'Resposta', largura: 340 },
-                      { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 },
-                      { key: 'chaves', label: 'Colunas devolvidas', largura: 320 }
-                    ],
-                    rows: res.map(function (r) {
-                      return { rotulo: r.rotulo,
-                               resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
-                               registros: r.ok ? r.registros : null,
-                               chaves: (r.chaves || []).join(', ') };
-                    }),
-                    busca: false, nomeArquivo: 'sondagem-cadastro'
-                  });
+                  renderSondagem(saidaSonda, res);
                 }).catch(function (e) {
                   botao.disabled = false;
                   U.clear(saidaSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
@@ -5687,8 +5683,22 @@ table.dt td.neg { color: var(--critical); }
               (ds.cadastro.detalhe || 'O cruzamento com o cadastro não funcionou.') +
               (ds.cadastro.erro ? ' Erro: ' + ds.cadastro.erro : '') +
               ' As instituições seguem identificadas pelo código.', 'bad'));
-            cForma.corpo.appendChild(U.el('div', { class: 'field-label', text: 'Endereço consultado para o cadastro' }));
-            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.cadastro.url }));
+
+            /* Falhou: em vez de pedir que alguém aperte um botão para descobrir
+               o porquê, sondamos na hora e mostramos o que o Banco Central
+               respondeu a cada formato de endereço. */
+            var autoSonda = U.el('div', { style: 'margin-top:12px' });
+            cForma.corpo.appendChild(autoSonda);
+            if (!ds.demo) {
+              autoSonda.appendChild(UI.carregando('Descobrindo qual formato de endereço o BCB aceita…'));
+              API.sondarCadastro(ds.anoMes, ds.tipo).then(function (res) {
+                ultimaSondagem = res;
+                U.clear(autoSonda);
+                renderSondagem(autoSonda, res);
+              }).catch(function (e) {
+                U.clear(autoSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
+              });
+            }
           }
 
           cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px',
@@ -5788,6 +5798,34 @@ table.dt td.neg { color: var(--critical); }
   /* ---------------- apoio da tela de Diagnóstico ---------------------- */
 
   var ultimaSondagem = null;
+
+  /** Desenha o veredito da sondagem e a tabela formato → resposta do servidor. */
+  function renderSondagem(alvo, res) {
+    var vencedor = res.find(function (r) { return r.ok && r.registros; });
+    alvo.appendChild(UI.nota(vencedor
+      ? 'Formato aceito pelo Banco Central: "' + vencedor.rotulo +
+        '". Recarregue o painel — os nomes devem aparecer.'
+      : 'Nenhum dos formatos testados devolveu dados. Tire uma foto desta tela ' +
+        'e envie para suporte: a coluna "Resposta" traz a explicação do próprio BCB.',
+      vencedor ? 'good' : 'bad'));
+    var tabela = U.el('div');
+    alvo.appendChild(tabela);
+    TBL.render(tabela, {
+      columns: [
+        { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 240 },
+        { key: 'resultado', label: 'Resposta do BCB', largura: 420 },
+        { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 },
+        { key: 'chaves', label: 'Colunas devolvidas', largura: 300 }
+      ],
+      rows: res.map(function (r) {
+        return { rotulo: r.rotulo,
+                 resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
+                 registros: r.ok ? r.registros : null,
+                 chaves: (r.chaves || []).join(', ') };
+      }),
+      busca: false, maxLinhas: 20, nomeArquivo: 'sondagem-cadastro'
+    });
+  }
 
   function textoCadastro(ds) {
     var c = ds.cadastro;

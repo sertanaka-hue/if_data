@@ -840,28 +840,7 @@
                   ultimaSondagem = res;
                   botao.disabled = false;
                   U.clear(saidaSonda);
-                  var vencedor = res.find(function (r) { return r.ok && r.registros; });
-                  saidaSonda.appendChild(UI.nota(vencedor
-                    ? 'Formato aceito: "' + vencedor.rotulo + '". Recarregue o painel — os nomes devem aparecer.'
-                    : 'Nenhum dos formatos testados devolveu dados. Use "Copiar diagnóstico" e envie o resultado.',
-                    vencedor ? 'good' : 'bad'));
-                  var alvoSonda = U.el('div');
-                  saidaSonda.appendChild(alvoSonda);
-                  TBL.render(alvoSonda, {
-                    columns: [
-                      { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 260 },
-                      { key: 'resultado', label: 'Resposta', largura: 340 },
-                      { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 },
-                      { key: 'chaves', label: 'Colunas devolvidas', largura: 320 }
-                    ],
-                    rows: res.map(function (r) {
-                      return { rotulo: r.rotulo,
-                               resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
-                               registros: r.ok ? r.registros : null,
-                               chaves: (r.chaves || []).join(', ') };
-                    }),
-                    busca: false, nomeArquivo: 'sondagem-cadastro'
-                  });
+                  renderSondagem(saidaSonda, res);
                 }).catch(function (e) {
                   botao.disabled = false;
                   U.clear(saidaSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
@@ -892,8 +871,22 @@
               (ds.cadastro.detalhe || 'O cruzamento com o cadastro não funcionou.') +
               (ds.cadastro.erro ? ' Erro: ' + ds.cadastro.erro : '') +
               ' As instituições seguem identificadas pelo código.', 'bad'));
-            cForma.corpo.appendChild(U.el('div', { class: 'field-label', text: 'Endereço consultado para o cadastro' }));
-            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.cadastro.url }));
+
+            /* Falhou: em vez de pedir que alguém aperte um botão para descobrir
+               o porquê, sondamos na hora e mostramos o que o Banco Central
+               respondeu a cada formato de endereço. */
+            var autoSonda = U.el('div', { style: 'margin-top:12px' });
+            cForma.corpo.appendChild(autoSonda);
+            if (!ds.demo) {
+              autoSonda.appendChild(UI.carregando('Descobrindo qual formato de endereço o BCB aceita…'));
+              API.sondarCadastro(ds.anoMes, ds.tipo).then(function (res) {
+                ultimaSondagem = res;
+                U.clear(autoSonda);
+                renderSondagem(autoSonda, res);
+              }).catch(function (e) {
+                U.clear(autoSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
+              });
+            }
           }
 
           cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px',
@@ -993,6 +986,34 @@
   /* ---------------- apoio da tela de Diagnóstico ---------------------- */
 
   var ultimaSondagem = null;
+
+  /** Desenha o veredito da sondagem e a tabela formato → resposta do servidor. */
+  function renderSondagem(alvo, res) {
+    var vencedor = res.find(function (r) { return r.ok && r.registros; });
+    alvo.appendChild(UI.nota(vencedor
+      ? 'Formato aceito pelo Banco Central: "' + vencedor.rotulo +
+        '". Recarregue o painel — os nomes devem aparecer.'
+      : 'Nenhum dos formatos testados devolveu dados. Tire uma foto desta tela ' +
+        'e envie para suporte: a coluna "Resposta" traz a explicação do próprio BCB.',
+      vencedor ? 'good' : 'bad'));
+    var tabela = U.el('div');
+    alvo.appendChild(tabela);
+    TBL.render(tabela, {
+      columns: [
+        { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 240 },
+        { key: 'resultado', label: 'Resposta do BCB', largura: 420 },
+        { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 },
+        { key: 'chaves', label: 'Colunas devolvidas', largura: 300 }
+      ],
+      rows: res.map(function (r) {
+        return { rotulo: r.rotulo,
+                 resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
+                 registros: r.ok ? r.registros : null,
+                 chaves: (r.chaves || []).join(', ') };
+      }),
+      busca: false, maxLinhas: 20, nomeArquivo: 'sondagem-cadastro'
+    });
+  }
 
   function textoCadastro(ds) {
     var c = ds.cadastro;
