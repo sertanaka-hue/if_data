@@ -833,26 +833,34 @@
             U.el('dt', { text: 'Colunas de dado' }), U.el('dd', { text: U.fmt(ds.columns.length, 0) }),
             U.el('dt', { text: 'Colunas de identificação' }), U.el('dd', { text: ds.metaColumns.join(', ') || '–' }),
             U.el('dt', { text: 'Origem' }), U.el('dd', { text: ds.demo ? 'dados sintéticos (demonstração)' : 'API do BCB' }),
-            U.el('dt', { text: 'Nomes das instituições' }),
-            U.el('dd', { text: ds.cadastro
-              ? ds.cadastro.nomeados + ' de ' + ds.rows.length +
-                ' obtidos do IfDataCadastro (' + ds.cadastro.casados + ' códigos casados em ' +
-                ds.cadastro.total + ' cadastrados)'
-              : 'vieram no próprio relatório de valores' })
+            U.el('dt', { text: 'Nomes das instituições' }), U.el('dd', { text: textoCadastro(ds) })
           ]));
-          if (ds.cadastro && ds.cadastro.casados === 0) {
-            cForma.corpo.appendChild(UI.nota('Nenhum código do relatório bateu com o cadastro do período. ' +
-              'As instituições continuam identificadas pelo código. Envie o "primeiro registro bruto" abaixo ' +
-              'para que o cruzamento seja ajustado.', 'warn'));
+
+          if (ds.cadastro && ds.cadastro.status !== 'ok') {
+            cForma.corpo.appendChild(UI.nota(
+              (ds.cadastro.detalhe || 'O cruzamento com o cadastro não funcionou.') +
+              (ds.cadastro.erro ? ' Erro: ' + ds.cadastro.erro : '') +
+              ' As instituições seguem identificadas pelo código.', 'bad'));
+            cForma.corpo.appendChild(U.el('div', { class: 'field-label', text: 'Endereço consultado para o cadastro' }));
+            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.cadastro.url }));
           }
-          if (ds.url) {
-            cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px', text: 'URL consultada' }));
-            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.url }));
-          }
-          if (ds.bruto) {
-            cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px', text: 'Primeiro registro bruto' }));
-            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: JSON.stringify(ds.bruto, null, 2) }));
-          }
+
+          cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px',
+            text: 'Como as três primeiras linhas ficaram identificadas' }));
+          cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.rows.slice(0, 3).map(function (r) {
+            return 'código ' + r.__id + '  →  ' + r.__nome;
+          }).join('\n') || '—' }));
+
+          cForma.corpo.appendChild(U.el('div', { class: 'row', style: 'margin-top:12px' }, [
+            U.el('button', {
+              class: 'btn btn--primary', text: 'Copiar diagnóstico',
+              title: 'Copia um resumo técnico para você colar numa conversa de suporte',
+              onclick: function () { copiarDiagnostico(this, ds); }
+            }),
+            U.el('span', { class: 'small muted',
+              text: 'Cola tudo o que é preciso para investigar um problema de identificação.' })
+          ]));
+
           node.appendChild(cForma.node);
 
           /* --- mapeamento de campos ------------------------------------------- */
@@ -930,4 +938,62 @@
       return { atualizar: render };
     }
   });
+
+  /* ---------------- apoio da tela de Diagnóstico ---------------------- */
+
+  function textoCadastro(ds) {
+    var c = ds.cadastro;
+    if (!c) return 'cruzamento com o cadastro não executado';
+    if (c.status === 'ok') {
+      return c.nomeados + ' de ' + ds.rows.length + ' nomes obtidos do IfDataCadastro (' +
+             c.casados + ' códigos casados em ' + c.total + ' cadastrados)';
+    }
+    if (c.status === 'falhou') return 'FALHOU — a consulta ao IfDataCadastro não completou';
+    if (c.status === 'vazio') return 'FALHOU — o IfDataCadastro respondeu vazio para este período';
+    if (c.status === 'sem-chave') return 'FALHOU — não achei a coluna de código ou de nome no cadastro';
+    if (c.status === 'sem-casamento') return 'FALHOU — nenhum código do relatório existe no cadastro';
+    return c.status;
+  }
+
+  /** Monta um resumo técnico e coloca na área de transferência. */
+  function copiarDiagnostico(botao, ds) {
+    var c = ds.cadastro || {};
+    var resumo = {
+      periodo: ds.anoMes, tipoInstituicao: ds.tipo, relatorio: ds.relatorio,
+      formaDoRetorno: ds.forma, linhas: ds.rows.length, colunasDeDado: ds.columns.length,
+      colunasDeIdentificacao: ds.metaColumns,
+      urlValores: ds.url || null,
+      primeiroRegistroDeValores: ds.bruto || null,
+      cadastro: {
+        status: c.status || 'nao-executado', url: c.url || null, erro: c.erro || null,
+        total: c.total || null, casados: c.casados || null, nomeados: c.nomeados || null,
+        chaveId: c.chaveId || null, chaveNome: c.chaveNome || null,
+        chavesDoCadastro: c.chavesCadastro || null,
+        primeiroRegistroDeCadastro: c.exemploCadastro || null
+      },
+      identificacaoResultante: ds.rows.slice(0, 3).map(function (r) {
+        return { codigo: r.__id, nome: r.__nome };
+      })
+    };
+    var texto = JSON.stringify(resumo, null, 2);
+    function feito() {
+      var antes = botao.textContent;
+      botao.textContent = 'Copiado ✓';
+      setTimeout(function () { botao.textContent = antes; }, 2500);
+      UI.toast('Diagnóstico copiado — cole na conversa de suporte.', 'good');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(feito, function () { manual(texto); });
+    } else {
+      manual(texto);
+    }
+    function manual(t) {
+      // navegador sem acesso à área de transferência: mostra para copiar à mão
+      UI.modal({
+        titulo: 'Diagnóstico',
+        sub: 'Selecione tudo e copie.',
+        corpo: U.el('textarea', { rows: 16, style: 'width:100%', text: t })
+      });
+    }
+  }
 })(window);

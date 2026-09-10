@@ -3442,11 +3442,12 @@ table.dt td.neg { color: var(--critical); }
       "&@TipoInstituicao=" + encodeURIComponent(tipo) +
       "&@Relatorio=" + encodeURIComponent("'" + relatorio + "'");
   }
-  function urlCadastro(anoMes, tipo) {
+  function urlCadastro(anoMes, tipo, tipoComAspas) {
+    var valorTipo = tipoComAspas ? "'" + tipo + "'" : String(tipo);
     return state.base +
       "/IfDataCadastro(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)" +
       "?@AnoMes=" + encodeURIComponent(anoMes) +
-      "&@TipoInstituicao=" + encodeURIComponent(tipo);
+      "&@TipoInstituicao=" + encodeURIComponent(valorTipo);
   }
 
   /** Lista de relatórios: tenta as formas conhecidas do endpoint. */
@@ -3506,7 +3507,9 @@ table.dt td.neg { color: var(--critical); }
     });
   }
 
-  /** Cadastro (instituições) de um período. */
+  /** Cadastro (instituições) de um período.
+      O parâmetro TipoInstituicao aparece ora numérico, ora entre aspas, conforme
+      o serviço — em vez de apostar numa forma, tentamos as duas. */
   function cadastro(anoMes, tipo) {
     var chave = 'cad.' + anoMes + '.' + tipo;
     if (memCache.has(chave)) return Promise.resolve(memCache.get(chave));
@@ -3515,10 +3518,20 @@ table.dt td.neg { color: var(--critical); }
       memCache.set(chave, d);
       return Promise.resolve(d);
     }
-    return getTodos(urlCadastro(anoMes, tipo)).then(function (v) {
-      memCache.set(chave, v);
-      return v;
-    });
+
+    var formas = [urlCadastro(anoMes, tipo), urlCadastro(anoMes, tipo, true)];
+    function tentar(i, ultimoErro) {
+      if (i >= formas.length) throw (ultimoErro || new Error('cadastro indisponível'));
+      return getTodos(formas[i])
+        .then(function (v) {
+          if (!v.length && i + 1 < formas.length) return tentar(i + 1, ultimoErro);
+          memCache.set(chave, v);
+          state.urlCadastroUsada = formas[i];
+          return v;
+        })
+        .catch(function (e) { return tentar(i + 1, e); });
+    }
+    return Promise.resolve().then(function () { return tentar(0, null); });
   }
 
   /**
@@ -3577,20 +3590,33 @@ table.dt td.neg { color: var(--critical); }
    */
   function enriquecerComCadastro(dados, anoMes, tipo) {
     if (!dados.rows.length) return Promise.resolve(dados);
+    var url = urlCadastro(anoMes, tipo);
 
-    var faltaNome = dados.rows.some(function (r) { return pareceCodigo(r.__nome); });
-    var faltaMeta = !dados.rows.some(function (r) {
-      return r.UF || r.Cidade || r.Municipio || r.SR || r.Segmento;
-    });
-    if (!faltaNome && !faltaMeta) return Promise.resolve(dados);
-
-    return cadastro(anoMes, tipo).then(function (lista) {
-      if (!lista || !lista.length) return dados;
+    /* O cruzamento roda SEMPRE que há linhas: o cadastro é a fonte oficial do
+       nome da instituição, então ele vence o que porventura tenha vindo no
+       relatório de valores. E o resultado é sempre registrado em dados.cadastro
+       — inclusive quando falha — para que o Diagnóstico diga a verdade em vez
+       de sugerir que estava tudo bem. */
+    // Promise.resolve() garante que até uma exceção síncrona caia no .catch
+    // abaixo, em vez de derrubar a consulta inteira de valores.
+    return Promise.resolve().then(function () {
+      return cadastro(anoMes, tipo);
+    }).then(function (lista) {
+      if (!lista || !lista.length) {
+        dados.cadastro = { status: 'vazio', url: url,
+          detalhe: 'O IfDataCadastro respondeu sem nenhuma instituição para este período e tipo.' };
+        return dados;
+      }
       var amostra = lista[0];
       var kId = acharChave(amostra, ['CodInst', 'Codigo', 'Cnpj', 'CNPJ']);
       var kNome = acharChave(amostra, ['NomeInstituicao', 'Instituicao', 'Nome',
                                        'NomeConglomerado', 'RazaoSocial']);
-      if (!kId) return dados;
+      if (!kId || !kNome) {
+        dados.cadastro = { status: 'sem-chave', url: url, chaves: Object.keys(amostra),
+          detalhe: 'O cadastro respondeu, mas não foi possível identificar nele ' +
+                   (!kId ? 'a coluna de código' : 'a coluna de nome') + '.' };
+        return dados;
+      }
 
       var porId = new Map();
       lista.forEach(function (c) {
@@ -3598,12 +3624,12 @@ table.dt td.neg { color: var(--critical); }
         if (id) porId.set(id, c);
       });
 
-      /* Rede de segurança: se os dois endpoints identificarem a instituição por
-         chaves diferentes (código de um lado, CNPJ do outro), o casamento pela
+      /* Rede de segurança: se cada endpoint identificar a instituição por uma
+         chave diferente (código de um lado, CNPJ do outro), o casamento pela
          chave principal dá zero — então tentamos também pelo CNPJ, comparando
-         só os dígitos. */
+         apenas os dígitos. */
       var kCnpjCad = acharChave(amostra, ['Cnpj', 'CNPJ']);
-      var kCnpjVal = dados.rows.length ? acharChave(dados.rows[0], ['Cnpj', 'CNPJ']) : null;
+      var kCnpjVal = acharChave(dados.rows[0], ['Cnpj', 'CNPJ']);
       var porCnpj = new Map();
       if (kCnpjCad && kCnpjVal) {
         lista.forEach(function (c) {
@@ -3626,10 +3652,8 @@ table.dt td.neg { color: var(--critical); }
         var c = achar(r);
         if (!c) return;
         casados++;
-        if (kNome && pareceCodigo(r.__nome)) {
-          var nome = String(c[kNome] == null ? '' : c[kNome]).trim();
-          if (nome && !pareceCodigo(nome)) { r.__nome = nome; nomeados++; }
-        }
+        var nome = String(c[kNome] == null ? '' : c[kNome]).trim();
+        if (nome && nome !== r.__nome) { r.__nome = nome; nomeados++; }
         CAMPOS_CADASTRO.forEach(function (campo) {
           var chave = acharChave(c, [campo]);
           if (!chave) return;
@@ -3638,13 +3662,26 @@ table.dt td.neg { color: var(--critical); }
         });
       });
 
-      dados.cadastro = { total: lista.length, casados: casados, nomeados: nomeados,
-                         chaveId: kId, chaveNome: kNome };
+      dados.cadastro = {
+        status: casados ? 'ok' : 'sem-casamento',
+        url: state.urlCadastroUsada || url, total: lista.length, casados: casados, nomeados: nomeados,
+        chaveId: kId, chaveNome: kNome,
+        chavesCadastro: Object.keys(amostra),
+        exemploCadastro: amostra,
+        detalhe: casados
+          ? null
+          : 'Nenhum código do relatório de valores foi encontrado no cadastro — ' +
+            'os dois endpoints parecem identificar a instituição de formas diferentes.'
+      };
       dados.metaColumns = Object.keys(dados.rows[0] || {}).filter(function (k) {
         return dados.columns.indexOf(k) < 0 && k.slice(0, 2) !== '__';
       });
       return dados;
-    }).catch(function () { return dados; });
+    }).catch(function (e) {
+      dados.cadastro = { status: 'falhou', url: url, erro: (e && e.message) || String(e),
+        detalhe: 'A consulta ao IfDataCadastro não completou, então os nomes não puderam ser buscados.' };
+      return dados;
+    });
   }
 
   /** Carrega o mesmo relatório em vários períodos (para séries temporais). */
@@ -5518,26 +5555,34 @@ table.dt td.neg { color: var(--critical); }
             U.el('dt', { text: 'Colunas de dado' }), U.el('dd', { text: U.fmt(ds.columns.length, 0) }),
             U.el('dt', { text: 'Colunas de identificação' }), U.el('dd', { text: ds.metaColumns.join(', ') || '–' }),
             U.el('dt', { text: 'Origem' }), U.el('dd', { text: ds.demo ? 'dados sintéticos (demonstração)' : 'API do BCB' }),
-            U.el('dt', { text: 'Nomes das instituições' }),
-            U.el('dd', { text: ds.cadastro
-              ? ds.cadastro.nomeados + ' de ' + ds.rows.length +
-                ' obtidos do IfDataCadastro (' + ds.cadastro.casados + ' códigos casados em ' +
-                ds.cadastro.total + ' cadastrados)'
-              : 'vieram no próprio relatório de valores' })
+            U.el('dt', { text: 'Nomes das instituições' }), U.el('dd', { text: textoCadastro(ds) })
           ]));
-          if (ds.cadastro && ds.cadastro.casados === 0) {
-            cForma.corpo.appendChild(UI.nota('Nenhum código do relatório bateu com o cadastro do período. ' +
-              'As instituições continuam identificadas pelo código. Envie o "primeiro registro bruto" abaixo ' +
-              'para que o cruzamento seja ajustado.', 'warn'));
+
+          if (ds.cadastro && ds.cadastro.status !== 'ok') {
+            cForma.corpo.appendChild(UI.nota(
+              (ds.cadastro.detalhe || 'O cruzamento com o cadastro não funcionou.') +
+              (ds.cadastro.erro ? ' Erro: ' + ds.cadastro.erro : '') +
+              ' As instituições seguem identificadas pelo código.', 'bad'));
+            cForma.corpo.appendChild(U.el('div', { class: 'field-label', text: 'Endereço consultado para o cadastro' }));
+            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.cadastro.url }));
           }
-          if (ds.url) {
-            cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px', text: 'URL consultada' }));
-            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.url }));
-          }
-          if (ds.bruto) {
-            cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px', text: 'Primeiro registro bruto' }));
-            cForma.corpo.appendChild(U.el('div', { class: 'pre', text: JSON.stringify(ds.bruto, null, 2) }));
-          }
+
+          cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px',
+            text: 'Como as três primeiras linhas ficaram identificadas' }));
+          cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.rows.slice(0, 3).map(function (r) {
+            return 'código ' + r.__id + '  →  ' + r.__nome;
+          }).join('\n') || '—' }));
+
+          cForma.corpo.appendChild(U.el('div', { class: 'row', style: 'margin-top:12px' }, [
+            U.el('button', {
+              class: 'btn btn--primary', text: 'Copiar diagnóstico',
+              title: 'Copia um resumo técnico para você colar numa conversa de suporte',
+              onclick: function () { copiarDiagnostico(this, ds); }
+            }),
+            U.el('span', { class: 'small muted',
+              text: 'Cola tudo o que é preciso para investigar um problema de identificação.' })
+          ]));
+
           node.appendChild(cForma.node);
 
           /* --- mapeamento de campos ------------------------------------------- */
@@ -5615,6 +5660,64 @@ table.dt td.neg { color: var(--critical); }
       return { atualizar: render };
     }
   });
+
+  /* ---------------- apoio da tela de Diagnóstico ---------------------- */
+
+  function textoCadastro(ds) {
+    var c = ds.cadastro;
+    if (!c) return 'cruzamento com o cadastro não executado';
+    if (c.status === 'ok') {
+      return c.nomeados + ' de ' + ds.rows.length + ' nomes obtidos do IfDataCadastro (' +
+             c.casados + ' códigos casados em ' + c.total + ' cadastrados)';
+    }
+    if (c.status === 'falhou') return 'FALHOU — a consulta ao IfDataCadastro não completou';
+    if (c.status === 'vazio') return 'FALHOU — o IfDataCadastro respondeu vazio para este período';
+    if (c.status === 'sem-chave') return 'FALHOU — não achei a coluna de código ou de nome no cadastro';
+    if (c.status === 'sem-casamento') return 'FALHOU — nenhum código do relatório existe no cadastro';
+    return c.status;
+  }
+
+  /** Monta um resumo técnico e coloca na área de transferência. */
+  function copiarDiagnostico(botao, ds) {
+    var c = ds.cadastro || {};
+    var resumo = {
+      periodo: ds.anoMes, tipoInstituicao: ds.tipo, relatorio: ds.relatorio,
+      formaDoRetorno: ds.forma, linhas: ds.rows.length, colunasDeDado: ds.columns.length,
+      colunasDeIdentificacao: ds.metaColumns,
+      urlValores: ds.url || null,
+      primeiroRegistroDeValores: ds.bruto || null,
+      cadastro: {
+        status: c.status || 'nao-executado', url: c.url || null, erro: c.erro || null,
+        total: c.total || null, casados: c.casados || null, nomeados: c.nomeados || null,
+        chaveId: c.chaveId || null, chaveNome: c.chaveNome || null,
+        chavesDoCadastro: c.chavesCadastro || null,
+        primeiroRegistroDeCadastro: c.exemploCadastro || null
+      },
+      identificacaoResultante: ds.rows.slice(0, 3).map(function (r) {
+        return { codigo: r.__id, nome: r.__nome };
+      })
+    };
+    var texto = JSON.stringify(resumo, null, 2);
+    function feito() {
+      var antes = botao.textContent;
+      botao.textContent = 'Copiado ✓';
+      setTimeout(function () { botao.textContent = antes; }, 2500);
+      UI.toast('Diagnóstico copiado — cole na conversa de suporte.', 'good');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(feito, function () { manual(texto); });
+    } else {
+      manual(texto);
+    }
+    function manual(t) {
+      // navegador sem acesso à área de transferência: mostra para copiar à mão
+      UI.modal({
+        titulo: 'Diagnóstico',
+        sub: 'Selecione tudo e copie.',
+        corpo: U.el('textarea', { rows: 16, style: 'width:100%', text: t })
+      });
+    }
+  }
 })(window);
 
 </script>

@@ -240,11 +240,12 @@
       "&@TipoInstituicao=" + encodeURIComponent(tipo) +
       "&@Relatorio=" + encodeURIComponent("'" + relatorio + "'");
   }
-  function urlCadastro(anoMes, tipo) {
+  function urlCadastro(anoMes, tipo, tipoComAspas) {
+    var valorTipo = tipoComAspas ? "'" + tipo + "'" : String(tipo);
     return state.base +
       "/IfDataCadastro(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao)" +
       "?@AnoMes=" + encodeURIComponent(anoMes) +
-      "&@TipoInstituicao=" + encodeURIComponent(tipo);
+      "&@TipoInstituicao=" + encodeURIComponent(valorTipo);
   }
 
   /** Lista de relatórios: tenta as formas conhecidas do endpoint. */
@@ -304,7 +305,9 @@
     });
   }
 
-  /** Cadastro (instituições) de um período. */
+  /** Cadastro (instituições) de um período.
+      O parâmetro TipoInstituicao aparece ora numérico, ora entre aspas, conforme
+      o serviço — em vez de apostar numa forma, tentamos as duas. */
   function cadastro(anoMes, tipo) {
     var chave = 'cad.' + anoMes + '.' + tipo;
     if (memCache.has(chave)) return Promise.resolve(memCache.get(chave));
@@ -313,10 +316,20 @@
       memCache.set(chave, d);
       return Promise.resolve(d);
     }
-    return getTodos(urlCadastro(anoMes, tipo)).then(function (v) {
-      memCache.set(chave, v);
-      return v;
-    });
+
+    var formas = [urlCadastro(anoMes, tipo), urlCadastro(anoMes, tipo, true)];
+    function tentar(i, ultimoErro) {
+      if (i >= formas.length) throw (ultimoErro || new Error('cadastro indisponível'));
+      return getTodos(formas[i])
+        .then(function (v) {
+          if (!v.length && i + 1 < formas.length) return tentar(i + 1, ultimoErro);
+          memCache.set(chave, v);
+          state.urlCadastroUsada = formas[i];
+          return v;
+        })
+        .catch(function (e) { return tentar(i + 1, e); });
+    }
+    return Promise.resolve().then(function () { return tentar(0, null); });
   }
 
   /**
@@ -375,20 +388,33 @@
    */
   function enriquecerComCadastro(dados, anoMes, tipo) {
     if (!dados.rows.length) return Promise.resolve(dados);
+    var url = urlCadastro(anoMes, tipo);
 
-    var faltaNome = dados.rows.some(function (r) { return pareceCodigo(r.__nome); });
-    var faltaMeta = !dados.rows.some(function (r) {
-      return r.UF || r.Cidade || r.Municipio || r.SR || r.Segmento;
-    });
-    if (!faltaNome && !faltaMeta) return Promise.resolve(dados);
-
-    return cadastro(anoMes, tipo).then(function (lista) {
-      if (!lista || !lista.length) return dados;
+    /* O cruzamento roda SEMPRE que há linhas: o cadastro é a fonte oficial do
+       nome da instituição, então ele vence o que porventura tenha vindo no
+       relatório de valores. E o resultado é sempre registrado em dados.cadastro
+       — inclusive quando falha — para que o Diagnóstico diga a verdade em vez
+       de sugerir que estava tudo bem. */
+    // Promise.resolve() garante que até uma exceção síncrona caia no .catch
+    // abaixo, em vez de derrubar a consulta inteira de valores.
+    return Promise.resolve().then(function () {
+      return cadastro(anoMes, tipo);
+    }).then(function (lista) {
+      if (!lista || !lista.length) {
+        dados.cadastro = { status: 'vazio', url: url,
+          detalhe: 'O IfDataCadastro respondeu sem nenhuma instituição para este período e tipo.' };
+        return dados;
+      }
       var amostra = lista[0];
       var kId = acharChave(amostra, ['CodInst', 'Codigo', 'Cnpj', 'CNPJ']);
       var kNome = acharChave(amostra, ['NomeInstituicao', 'Instituicao', 'Nome',
                                        'NomeConglomerado', 'RazaoSocial']);
-      if (!kId) return dados;
+      if (!kId || !kNome) {
+        dados.cadastro = { status: 'sem-chave', url: url, chaves: Object.keys(amostra),
+          detalhe: 'O cadastro respondeu, mas não foi possível identificar nele ' +
+                   (!kId ? 'a coluna de código' : 'a coluna de nome') + '.' };
+        return dados;
+      }
 
       var porId = new Map();
       lista.forEach(function (c) {
@@ -396,12 +422,12 @@
         if (id) porId.set(id, c);
       });
 
-      /* Rede de segurança: se os dois endpoints identificarem a instituição por
-         chaves diferentes (código de um lado, CNPJ do outro), o casamento pela
+      /* Rede de segurança: se cada endpoint identificar a instituição por uma
+         chave diferente (código de um lado, CNPJ do outro), o casamento pela
          chave principal dá zero — então tentamos também pelo CNPJ, comparando
-         só os dígitos. */
+         apenas os dígitos. */
       var kCnpjCad = acharChave(amostra, ['Cnpj', 'CNPJ']);
-      var kCnpjVal = dados.rows.length ? acharChave(dados.rows[0], ['Cnpj', 'CNPJ']) : null;
+      var kCnpjVal = acharChave(dados.rows[0], ['Cnpj', 'CNPJ']);
       var porCnpj = new Map();
       if (kCnpjCad && kCnpjVal) {
         lista.forEach(function (c) {
@@ -424,10 +450,8 @@
         var c = achar(r);
         if (!c) return;
         casados++;
-        if (kNome && pareceCodigo(r.__nome)) {
-          var nome = String(c[kNome] == null ? '' : c[kNome]).trim();
-          if (nome && !pareceCodigo(nome)) { r.__nome = nome; nomeados++; }
-        }
+        var nome = String(c[kNome] == null ? '' : c[kNome]).trim();
+        if (nome && nome !== r.__nome) { r.__nome = nome; nomeados++; }
         CAMPOS_CADASTRO.forEach(function (campo) {
           var chave = acharChave(c, [campo]);
           if (!chave) return;
@@ -436,13 +460,26 @@
         });
       });
 
-      dados.cadastro = { total: lista.length, casados: casados, nomeados: nomeados,
-                         chaveId: kId, chaveNome: kNome };
+      dados.cadastro = {
+        status: casados ? 'ok' : 'sem-casamento',
+        url: state.urlCadastroUsada || url, total: lista.length, casados: casados, nomeados: nomeados,
+        chaveId: kId, chaveNome: kNome,
+        chavesCadastro: Object.keys(amostra),
+        exemploCadastro: amostra,
+        detalhe: casados
+          ? null
+          : 'Nenhum código do relatório de valores foi encontrado no cadastro — ' +
+            'os dois endpoints parecem identificar a instituição de formas diferentes.'
+      };
       dados.metaColumns = Object.keys(dados.rows[0] || {}).filter(function (k) {
         return dados.columns.indexOf(k) < 0 && k.slice(0, 2) !== '__';
       });
       return dados;
-    }).catch(function () { return dados; });
+    }).catch(function (e) {
+      dados.cadastro = { status: 'falhou', url: url, erro: (e && e.message) || String(e),
+        detalhe: 'A consulta ao IfDataCadastro não completou, então os nomes não puderam ser buscados.' };
+      return dados;
+    });
   }
 
   /** Carrega o mesmo relatório em vários períodos (para séries temporais). */
