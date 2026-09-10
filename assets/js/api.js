@@ -138,6 +138,12 @@
     return null;
   }
 
+  /** "C0000001", "60746948", "" — texto sem nada que pareça um nome. */
+  function pareceCodigo(v) {
+    var t = String(v == null ? '' : v).trim();
+    return !t || /^[A-Za-z]{0,3}[\d.\-\/\s]+$/.test(t);
+  }
+
   /** Detecta se o retorno é "longo" (uma linha por conta) e devolve as chaves. */
   function detectarFormaLonga(amostra) {
     var kCol = acharChave(amostra, ['NomeColunaTraduzido', 'NomeColuna', 'Coluna', 'Conta',
@@ -326,8 +332,10 @@
     if (state.demoAtivo) {
       var dados = normalizar(global.DEMO.valores(anoMes, tipo, relatorio), ctx);
       dados.demo = true;
-      memCache.set(chave, dados);
-      return Promise.resolve(dados);
+      return enriquecerComCadastro(dados, anoMes, tipo).then(function (d) {
+        memCache.set(chave, d);
+        return d;
+      });
     }
 
     emit({ tipo: 'buscando', chave: chave });
@@ -336,9 +344,13 @@
         var dados = normalizar(brutas, ctx);
         dados.url = urlValores(anoMes, tipo, relatorio);
         dados.nBrutas = brutas.length;
+        return enriquecerComCadastro(dados, anoMes, tipo);
+      })
+      .then(function (dados) {
         state.ultimoDiagnostico = {
           url: dados.url, forma: dados.forma, linhas: dados.rows.length,
-          colunas: dados.columns.length, amostra: dados.bruto, quando: new Date().toISOString()
+          colunas: dados.columns.length, amostra: dados.bruto,
+          cadastro: dados.cadastro || null, quando: new Date().toISOString()
         };
         memCache.set(chave, dados);
         emit({ tipo: 'ok', chave: chave, dados: dados });
@@ -348,6 +360,89 @@
         emit({ tipo: 'erro', chave: chave, erro: e });
         throw e;
       });
+  }
+
+  /* Campos de identificação que o cadastro pode completar quando o relatório de
+     valores só traz o código da instituição. */
+  var CAMPOS_CADASTRO = ['NomeInstituicao', 'Instituicao', 'Nome', 'NomeConglomerado',
+                         'RazaoSocial', 'Cnpj', 'UF', 'Cidade', 'Municipio',
+                         'SR', 'Segmento', 'TCB', 'TC', 'TD'];
+
+  /**
+   * O IfDataValores identifica a instituição só pelo código; os nomes (e a UF, a
+   * cidade e o segmento) moram no IfDataCadastro. Esta função cruza os dois pelo
+   * código e completa o que falta — silenciosamente, se o cadastro não responder.
+   */
+  function enriquecerComCadastro(dados, anoMes, tipo) {
+    if (!dados.rows.length) return Promise.resolve(dados);
+
+    var faltaNome = dados.rows.some(function (r) { return pareceCodigo(r.__nome); });
+    var faltaMeta = !dados.rows.some(function (r) {
+      return r.UF || r.Cidade || r.Municipio || r.SR || r.Segmento;
+    });
+    if (!faltaNome && !faltaMeta) return Promise.resolve(dados);
+
+    return cadastro(anoMes, tipo).then(function (lista) {
+      if (!lista || !lista.length) return dados;
+      var amostra = lista[0];
+      var kId = acharChave(amostra, ['CodInst', 'Codigo', 'Cnpj', 'CNPJ']);
+      var kNome = acharChave(amostra, ['NomeInstituicao', 'Instituicao', 'Nome',
+                                       'NomeConglomerado', 'RazaoSocial']);
+      if (!kId) return dados;
+
+      var porId = new Map();
+      lista.forEach(function (c) {
+        var id = String(c[kId] == null ? '' : c[kId]).trim();
+        if (id) porId.set(id, c);
+      });
+
+      /* Rede de segurança: se os dois endpoints identificarem a instituição por
+         chaves diferentes (código de um lado, CNPJ do outro), o casamento pela
+         chave principal dá zero — então tentamos também pelo CNPJ, comparando
+         só os dígitos. */
+      var kCnpjCad = acharChave(amostra, ['Cnpj', 'CNPJ']);
+      var kCnpjVal = dados.rows.length ? acharChave(dados.rows[0], ['Cnpj', 'CNPJ']) : null;
+      var porCnpj = new Map();
+      if (kCnpjCad && kCnpjVal) {
+        lista.forEach(function (c) {
+          var d = String(c[kCnpjCad] == null ? '' : c[kCnpjCad]).replace(/\D/g, '');
+          if (d) porCnpj.set(d, c);
+        });
+      }
+      function achar(r) {
+        var c = porId.get(String(r.__id).trim());
+        if (c) return c;
+        if (kCnpjVal && porCnpj.size) {
+          var d = String(r[kCnpjVal] == null ? '' : r[kCnpjVal]).replace(/\D/g, '');
+          if (d) return porCnpj.get(d) || null;
+        }
+        return null;
+      }
+
+      var casados = 0, nomeados = 0;
+      dados.rows.forEach(function (r) {
+        var c = achar(r);
+        if (!c) return;
+        casados++;
+        if (kNome && pareceCodigo(r.__nome)) {
+          var nome = String(c[kNome] == null ? '' : c[kNome]).trim();
+          if (nome && !pareceCodigo(nome)) { r.__nome = nome; nomeados++; }
+        }
+        CAMPOS_CADASTRO.forEach(function (campo) {
+          var chave = acharChave(c, [campo]);
+          if (!chave) return;
+          var atual = r[campo];
+          if (atual === undefined || atual === null || atual === '') r[campo] = c[chave];
+        });
+      });
+
+      dados.cadastro = { total: lista.length, casados: casados, nomeados: nomeados,
+                         chaveId: kId, chaveNome: kNome };
+      dados.metaColumns = Object.keys(dados.rows[0] || {}).filter(function (k) {
+        return dados.columns.indexOf(k) < 0 && k.slice(0, 2) !== '__';
+      });
+      return dados;
+    }).catch(function () { return dados; });
   }
 
   /** Carrega o mesmo relatório em vários períodos (para séries temporais). */
@@ -423,7 +518,7 @@
     testar: testar,
     periodosDisponiveis: periodosDisponiveis,
     limparCache: limparCache,
-    normalizar: normalizar,
+    normalizar: normalizar, pareceCodigo: pareceCodigo,
     urlValores: urlValores,
     urlCadastro: urlCadastro,
     on: on

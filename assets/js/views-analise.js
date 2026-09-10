@@ -832,8 +832,19 @@
             U.el('dt', { text: 'Instituições' }), U.el('dd', { text: U.fmt(ds.rows.length, 0) }),
             U.el('dt', { text: 'Colunas de dado' }), U.el('dd', { text: U.fmt(ds.columns.length, 0) }),
             U.el('dt', { text: 'Colunas de identificação' }), U.el('dd', { text: ds.metaColumns.join(', ') || '–' }),
-            U.el('dt', { text: 'Origem' }), U.el('dd', { text: ds.demo ? 'dados sintéticos (demonstração)' : 'API do BCB' })
+            U.el('dt', { text: 'Origem' }), U.el('dd', { text: ds.demo ? 'dados sintéticos (demonstração)' : 'API do BCB' }),
+            U.el('dt', { text: 'Nomes das instituições' }),
+            U.el('dd', { text: ds.cadastro
+              ? ds.cadastro.nomeados + ' de ' + ds.rows.length +
+                ' obtidos do IfDataCadastro (' + ds.cadastro.casados + ' códigos casados em ' +
+                ds.cadastro.total + ' cadastrados)'
+              : 'vieram no próprio relatório de valores' })
           ]));
+          if (ds.cadastro && ds.cadastro.casados === 0) {
+            cForma.corpo.appendChild(UI.nota('Nenhum código do relatório bateu com o cadastro do período. ' +
+              'As instituições continuam identificadas pelo código. Envie o "primeiro registro bruto" abaixo ' +
+              'para que o cruzamento seja ajustado.', 'warn'));
+          }
           if (ds.url) {
             cForma.corpo.appendChild(U.el('div', { class: 'field-label', style: 'margin-top:10px', text: 'URL consultada' }));
             cForma.corpo.appendChild(U.el('div', { class: 'pre', text: ds.url }));

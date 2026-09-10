@@ -40,7 +40,7 @@
       var dataset = {
         anoMes: c.anoMes, tipo: c.tipo, relatorio: c.relatorio,
         rows: d.rows, columns: d.columns, metaColumns: d.metaColumns,
-        forma: d.forma, demo: !!d.demo, url: d.url, bruto: d.bruto,
+        forma: d.forma, demo: !!d.demo, url: d.url, bruto: d.bruto, cadastro: d.cadastro || null,
         campos: res.map, scoreCampos: res.score, semUso: res.unmatched
       };
       if (!o.naoGuardar) ST.set({ dataset: dataset }, 'dataset');

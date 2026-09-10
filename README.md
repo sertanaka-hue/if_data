@@ -66,7 +66,7 @@ https://olinda.bcb.gov.br/olinda/servico/IFDATA/versao/v1/odata
 | Recurso | Uso |
 |---|---|
 | `ListaDeRelatorio` | Descobre os relatórios disponíveis (com catálogo interno de reserva). |
-| `IfDataCadastro(AnoMes,TipoInstituicao)` | Cadastro das instituições do período. |
+| `IfDataCadastro(AnoMes,TipoInstituicao)` | Nome, UF, cidade e segmento de cada instituição. |
 | `IfDataValores(AnoMes,TipoInstituicao,Relatorio)` | Valores de cada coluna do relatório. |
 
 Os dados são trimestrais (`AnoMes` = `AAAAMM`, com mês 03, 06, 09 ou 12) e
@@ -74,6 +74,20 @@ publicados cerca de 60 dias após o fechamento de março, junho e setembro, e 90
 dias após dezembro. A lista de trimestres da barra superior já aplica essa
 defasagem; **Diagnóstico → Detectar períodos** confirma o que realmente existe
 para o relatório e o tipo escolhidos.
+
+### O nome das instituições vem do cadastro
+
+O `IfDataValores` identifica a instituição **apenas pelo código** (`CodInst`);
+o nome, a UF, a cidade e o segmento estão no `IfDataCadastro`. O cliente busca
+os dois e cruza pelo código — e, se cada endpoint usar uma chave diferente,
+tenta ainda pelo CNPJ (comparando só os dígitos). Sem esse cruzamento o painel
+mostraria códigos no lugar dos nomes e os filtros de UF e segmento ficariam
+vazios.
+
+O cruzamento roda só quando faz falta, e o cadastro fica em cache junto com o
+resto. **Diagnóstico → Retorno do relatório em tela** informa quantos nomes
+foram obtidos assim; se nenhum código casar, a tela avisa em vez de exibir
+códigos silenciosamente.
 
 ### Descoberta de schema em tempo de execução
 

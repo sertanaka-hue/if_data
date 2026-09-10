@@ -111,10 +111,11 @@
         var n1 = pr * (0.86 + rnd() * 0.12);
         var provisao = credito * (0.028 + rnd() * 0.045);
 
-        var base = {
-          CodInst: r[0], NomeInstituicao: r[1], UF: r[3], Cidade: r[4],
-          SR: r[6], AnoMes: String(anoMes), NomeRelatorio: rel
-        };
+        /* Como no IfDataValores de verdade: a linha identifica a instituição
+           apenas pelo código. Nome, UF, cidade e segmento vêm do IfDataCadastro
+           e são cruzados em api.js — manter a demonstração fiel a isso é o que
+           permite testar esse cruzamento sem rede. */
+        var base = { CodInst: r[0], AnoMes: String(anoMes), NomeRelatorio: rel };
 
         if (rel === '5') {
           base['Capital Principal'] = cp;
