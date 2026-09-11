@@ -1,8 +1,15 @@
-# IF.data Analytics
+# Risk Bench
 
-Sistema em HTML para **consultar, agregar e analisar graficamente** os dados do
-[IF.data](https://www3.bcb.gov.br/ifdata/) — o relatório trimestral de dados
-selecionados das instituições financeiras do Banco Central do Brasil.
+Monitor de instituições financeiras dos segmentos prudenciais **S1 e S2**, em
+dois módulos:
+
+| Módulo | O que faz |
+|---|---|
+| **IF.data** | Consulta, agrega e analisa os dados do [IF.data](https://www3.bcb.gov.br/ifdata/) do Banco Central, direto da API. |
+| **Publicações** | Concilia o que os bancos publicam em quatro fontes — BR GAAP, IFRS, Pilar 3 e 20-F — e aponta onde os números não batem. |
+
+Tema escuro fixo, janela de quatro anos (16 trimestres) e escopo restrito a S1
+e S2, derivado do relatório de Segmentação do próprio BCB.
 
 Roda inteiramente no navegador: **não há servidor, backend, build nem
 dependência externa**. As consultas vão direto do seu navegador para a API de
@@ -38,7 +45,68 @@ python3 build/gerar-arquivo-unico.py
 
 ---
 
-## As sete telas
+## Módulo Publicações
+
+### A restrição que define o desenho
+
+BR GAAP, IFRS, Pilar 3 e 20-F **não têm API**. São PDFs e planilhas publicados
+no site de relações com investidores de cada banco, na CVM e na SEC, cada um com
+layout próprio. Um sistema que roda só no navegador não consegue baixá-los (os
+sites não liberam acesso externo) nem extrair tabelas de PDF.
+
+O desenho contorna isso sem fingir que o problema não existe:
+
+- o **IF.data entra automático** e vira linha de base — ele já publica PR, RWA,
+  índices de capital e resultado;
+- as quatro publicações entram por **importação de planilha** ou lançamento
+  manual, com o documento e a nota de origem registrados junto do número;
+- o sistema faz o que é realmente difícil: **conciliar as fontes e apontar as
+  divergências**.
+
+O formato de importação é o contrato. Um extrator automático, no futuro, só
+precisa gerar esse CSV — nada mais no sistema muda.
+
+### As cinco telas
+
+| Tela | O que entrega |
+|---|---|
+| **Cobertura** | Matriz banco × fonte: quantas das células esperadas (métrica × trimestre) já têm número. Mostra onde o levantamento está furado. |
+| **Comparativo** | Uma métrica, um banco, as cinco fontes ao longo de 16 trimestres. Onde as linhas se separam, as publicações contam histórias diferentes. |
+| **Divergências** | Conciliação ordenada pelo tamanho da diferença, com mapa de calor banco × métrica e exportação. |
+| **Lançamentos** | Importação de CSV, lançamento manual, modelo de planilha e catálogo de identificadores. |
+| **Onde buscar** | Atalhos de busca por banco para RI, Pilar 3, 20-F na SEC e CVM. |
+
+### O catálogo de indicadores
+
+42 métricas em cinco famílias, cada uma declarando em que fontes costuma ser
+publicada — é isso que alimenta a matriz de cobertura:
+
+- **Rentabilidade** (8) — lucro contábil e recorrente, ROAE, ROAA, NIM,
+  eficiência, receita de serviços, custo do crédito.
+- **Risco de mercado** (11) — VaR 1d 99% de fechamento, médio e máximo, stressed
+  VaR, VaR por fator (juros, câmbio, ações), exceções de backtesting, IRRBB
+  (ΔEVE e ΔNII) e DV01.
+- **Liquidez** (8) — LCR com HQLA e saídas líquidas, NSFR, LDR, reserva de
+  liquidez, concentração dos dez maiores depositantes, prazo médio de captação.
+- **Capital** (9) — PR, Capital Principal, Nível I, os três índices, razão de
+  alavancagem, folga sobre o requerimento e patrimônio contábil.
+- **RWA** (6) — total e por parcela (crédito, mercado, operacional), densidade
+  sobre o ativo e fatia apurada por abordagem interna.
+
+Dez delas têm equivalente calculável no IF.data e são espelhadas
+automaticamente.
+
+### Como a divergência é medida
+
+Índices e percentuais comparam-se em **pontos percentuais**; saldos, em
+**variação relativa** sobre o maior valor observado. A severidade é alta acima
+de 1 p.p. ou 5%, média acima de 0,25 p.p. ou 1%. Uma célula com uma só fonte não
+gera apontamento — sem duas observações não há divergência, e inventar uma seria
+ruído.
+
+---
+
+## Módulo IF.data — as sete telas
 
 | Tela | O que entrega |
 |---|---|
@@ -52,6 +120,11 @@ python3 build/gerar-arquivo-unico.py
 
 Todo gráfico tem uma aba **Tabela** com os mesmos números e botões **PNG/SVG** —
 nenhum valor fica acessível só por *hover*.
+
+O **escopo S1/S2** é derivado do relatório de Segmentação do BCB para o período
+em tela. Quando o Banco Central não informa o segmento, o escopo não filtra nada
+e a tela avisa — melhor mostrar tudo com um aviso do que esvaziar o painel em
+silêncio.
 
 ---
 
@@ -175,16 +248,22 @@ assets/js/
   ui.js                     multiselect, cards, modais, stat tiles, toasts
   table.js                  tabela com ordenação, busca e exportação CSV
   store.js                  estado e persistência dos conjuntos
-  views-core.js             carga de dados, escala, guarda de render
+  views-core.js             carga de dados, escopo S1/S2, escala, guarda de render
   views-dados.js            Consulta, Comparar, Série temporal
   views-analise.js          Conjuntos, Análise de conjunto, Mercado, Diagnóstico
-  app.js                    filtros globais, abas, tema
+  pub-catalog.js            fontes, famílias e as 42 métricas do módulo Publicações
+  pub-store.js              lançamentos, importação e motor de conciliação
+  views-publicacoes.js      Cobertura, Comparativo, Divergências, Lançamentos, Onde buscar
+  app.js                    módulos, filtros globais, abas
 ```
 
 ### Notas de desenho
 
-A paleta categórica de oito séries foi validada para contraste e para as três
-formas de daltonismo; a cor **segue a entidade**, não a posição no ranking — o
+Tema escuro único e deliberado — o Risk Bench é operado em sala de risco, ao
+lado de terminais —, com toda cor pintada explicitamente para que a página não
+herde o fundo de quem a hospeda. A paleta categórica de oito séries foi validada
+para contraste e para as três formas de daltonismo; a cor **segue a entidade**
+(ou a fonte, no módulo Publicações), não a posição no ranking — o
 Banco X mantém o mesmo azul em todos os gráficos e filtrar séries não repinta as
 demais. Escalas sequenciais usam um único tom, e a divergente usa dois polos com
 cinza neutro no meio. Nenhum gráfico tem dois eixos verticais: grandezas

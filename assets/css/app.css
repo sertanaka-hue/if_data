@@ -4,84 +4,11 @@
    ========================================================================== */
 
 :root {
-  color-scheme: light;
-
-  /* superfícies e tinta */
-  --plane:          #f9f9f7;
-  --surface-1:      #fcfcfb;
-  --surface-2:      #f3f2ee;
-  --surface-sunk:   #efeee9;
-  --text-primary:   #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted:     #898781;
-  --grid:           #e1e0d9;
-  --axis:           #c3c2b7;
-  --border:         rgba(11, 11, 11, .10);
-  --border-strong:  rgba(11, 11, 11, .18);
-  --shadow:         0 1px 2px rgba(11,11,11,.05), 0 8px 24px -12px rgba(11,11,11,.16);
-
-  /* categóricas — ordem fixa, atribuída por entidade (nunca por posição/rank) */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
-  --series-6: #008300;
-  --series-7: #4a3aa7;
-  --series-8: #e34948;
-
-  /* sequencial (magnitude) — azul, claro→escuro */
-  --seq-100: #cde2fb; --seq-200: #9ec5f4; --seq-300: #6da7ec; --seq-400: #3987e5;
-  --seq-500: #256abf; --seq-600: #184f95; --seq-700: #0d366b;
-
-  /* divergente (polaridade) */
-  --div-neg: #2a78d6;
-  --div-mid: #f0efec;
-  --div-pos: #d03b3b;
-
-  /* status — reservado, nunca usado como série */
-  --good:     #0ca30c;
-  --warning:  #fab219;
-  --serious:  #ec835a;
-  --critical: #d03b3b;
-  --delta-up: #006300;
-
-  --accent:      #2a78d6;
-  --accent-soft: #e8f1fd;
-
-  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --plane:          #0d0d0d;
-    --surface-1:      #1a1a19;
-    --surface-2:      #232322;
-    --surface-sunk:   #141413;
-    --text-primary:   #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted:     #898781;
-    --grid:           #2c2c2a;
-    --axis:           #383835;
-    --border:         rgba(255,255,255,.10);
-    --border-strong:  rgba(255,255,255,.20);
-    --shadow:         0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.8);
-    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
-    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
-    --seq-100: #0d366b; --seq-200: #184f95; --seq-300: #256abf; --seq-400: #3987e5;
-    --seq-500: #6da7ec; --seq-600: #9ec5f4; --seq-700: #cde2fb;
-    --div-mid: #383835;
-    --delta-up: #0ca30c;
-    --accent: #3987e5;
-    --accent-soft: #16283d;
-  }
-}
-
-:root[data-theme="dark"] {
   color-scheme: dark;
+
+  /* Tema escuro único e deliberado: o Risk Bench é operado em sala de risco,
+     lado a lado com terminais. Toda cor é pintada explicitamente — a página
+     nunca herda o fundo do hospedeiro. */
   --plane:          #0d0d0d;
   --surface-1:      #1a1a19;
   --surface-2:      #232322;
@@ -91,20 +18,50 @@
   --text-muted:     #898781;
   --grid:           #2c2c2a;
   --axis:           #383835;
-  --border:         rgba(255,255,255,.10);
-  --border-strong:  rgba(255,255,255,.20);
+  --border:         rgba(255, 255, 255, .10);
+  --border-strong:  rgba(255, 255, 255, .20);
   --shadow:         0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.8);
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
-  --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+
+  /* categóricas — ordem fixa, atribuída por entidade (nunca por posição/rank).
+     Passa contraste e as três formas de daltonismo sobre esta superfície. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  /* sequencial (magnitude) — azul, escuro→claro no fundo escuro */
   --seq-100: #0d366b; --seq-200: #184f95; --seq-300: #256abf; --seq-400: #3987e5;
   --seq-500: #6da7ec; --seq-600: #9ec5f4; --seq-700: #cde2fb;
+
+  /* divergente (polaridade) — dois polos opostos, cinza neutro no meio */
+  --div-neg: #3987e5;
   --div-mid: #383835;
+  --div-pos: #d03b3b;
+
+  /* status — reservado, nunca usado como série */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
   --delta-up: #0ca30c;
-  --accent: #3987e5;
+
+  --accent:      #3987e5;
   --accent-soft: #16283d;
+
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
+
+/* O atributo hidden tem de vencer o display dos componentes: sem isto, uma
+   .filterbar escondida continua ocupando espaço por causa do display:flex. */
+[hidden] { display: none !important; }
 
 html, body { height: 100%; }
 
@@ -500,4 +457,83 @@ table.dt td.neg { color: var(--critical); }
 @media print {
   .topbar, .tabs, .filterbar, .card__tools, .toasts { display: none !important; }
   .card { break-inside: avoid; box-shadow: none; }
+}
+
+/* ==========================================================================
+   Risk Bench — navegação por módulo e telas de publicações
+   ========================================================================== */
+
+.brand__modulo {
+  font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); padding-left: 10px; margin-left: 2px;
+  border-left: 1px solid var(--border-strong);
+}
+
+/* matriz de cobertura: banco × fonte */
+.matriz { overflow-x: auto; }
+.matriz table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12.5px; }
+.matriz th, .matriz td { padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+.matriz thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--surface-2);
+  font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--text-secondary); text-align: center;
+}
+.matriz td.banco, .matriz th.banco {
+  position: sticky; left: 0; z-index: 1; background: var(--surface-1);
+  text-align: left; border-right: 1px solid var(--grid); min-width: 220px;
+}
+.matriz thead th.banco { z-index: 3; background: var(--surface-2); }
+.matriz td.celula { text-align: center; }
+
+/* pastilha de cobertura — forma + texto, nunca só cor */
+.cob {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  min-width: 42px; padding: 2px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border-strong); color: var(--text-secondary);
+  background: var(--surface-2);
+}
+.cob--cheia { border-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--good); }
+.cob--parcial { border-color: color-mix(in srgb, var(--warning) 60%, transparent); color: var(--warning); }
+.cob--vazia { opacity: .45; }
+
+/* apontamento de divergência */
+.div-lista { display: flex; flex-direction: column; gap: 8px; }
+.div-item {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; align-items: baseline;
+  padding: 10px 12px; border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: var(--r-md); background: var(--surface-1);
+}
+.div-item--alta { border-left-color: var(--critical); }
+.div-item--media { border-left-color: var(--warning); }
+.div-item--baixa { border-left-color: var(--text-muted); }
+.div-item__metrica { font-weight: 600; font-size: 13px; }
+.div-item__contexto { font-size: 12px; color: var(--text-muted); grid-column: 1 / -1; }
+.div-item__valor { font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; }
+.div-item__gap { font-weight: 600; }
+
+/* fichas de fonte por banco */
+.fontes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.fonte-card {
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface-1); padding: 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.fonte-card__nome { font-weight: 600; font-size: 13.5px; }
+.fonte-card__links { display: flex; flex-wrap: wrap; gap: 6px; }
+.fonte-link {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--text-secondary); text-decoration: none;
+}
+.fonte-link:hover { background: var(--surface-2); color: var(--text-primary); }
+
+/* formulário de lançamento */
+.form-grid { display: grid; gap: 10px 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.form-grid .field-label { margin: 0; }
+
+.familia-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+  padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
 }

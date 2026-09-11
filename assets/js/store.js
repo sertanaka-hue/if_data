@@ -12,6 +12,9 @@
     tipo: 1,
     relatorio: '1',
     anualizar: true,
+    escopoS1S2: true,             // Risk Bench trabalha com S1 e S2
+    modulo: 'ifdata',             // ifdata | publicacoes
+    escala: 1,
     modo: 'auto',                 // auto | live | demo
     base: null,                   // URL alternativa da API
     overridesCampos: {},          // campoCanonico -> nome de coluna
@@ -37,7 +40,7 @@
       localStorage.setItem(CHAVE_PREFS, JSON.stringify({
         anoMes: estado.anoMes, tipo: estado.tipo, relatorio: estado.relatorio,
         anualizar: estado.anualizar, modo: estado.modo, base: estado.base,
-        tema: document.documentElement.getAttribute('data-theme') || 'sistema'
+        escopoS1S2: estado.escopoS1S2, modulo: estado.modulo, escala: estado.escala
       }));
     } catch (e) {}
   }
@@ -51,6 +54,9 @@
       if (typeof p.anualizar === 'boolean') estado.anualizar = p.anualizar;
       if (p.modo) estado.modo = p.modo;
       if (p.base) estado.base = p.base;
+      if (typeof p.escopoS1S2 === 'boolean') estado.escopoS1S2 = p.escopoS1S2;
+      if (p.modulo) estado.modulo = p.modulo;
+      if (p.escala) estado.escala = Number(p.escala);
       return p;
     } catch (e) { return null; }
   }

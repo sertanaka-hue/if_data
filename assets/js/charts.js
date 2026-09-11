@@ -40,6 +40,17 @@
       registro.clear(); proximo = 0;
       Colors.reserve(keys);
     },
+    /** Tinta legível sobre um passo da rampa.
+        Neste tema a rampa sequencial vai de escuro (t=0) a claro (t=1), então
+        é o topo da escala que precisa de tinta escura — e não o contrário. */
+    tintaSobre: function (t, divergente) {
+      if (!U.isNum(t)) return 'var(--text-primary)';
+      if (divergente) {
+        // arm negativo clareia com a intensidade; o positivo permanece escuro
+        return t < -0.6 ? '#0b0b0b' : '#ffffff';
+      }
+      return t > 0.55 ? '#0b0b0b' : '#ffffff';
+    },
     seq: function (t) {                      // t em [0,1] -> rampa sequencial
       var steps = ['--seq-100', '--seq-200', '--seq-300', '--seq-400',
                    '--seq-500', '--seq-600', '--seq-700'];
@@ -745,13 +756,11 @@
           g.appendChild(cell);
 
           if (cfg.mostrarValor && cellW > 54 && U.isNum(v)) {
-            // numa escala divergente o extremo escuro fica nas DUAS pontas,
-            // então a intensidade é o módulo, não a posição no intervalo
-            var t = divergente ? Math.abs(v) / lim : (v - vmin) / ((vmax - vmin) || 1);
+            var t = divergente ? v / lim : (v - vmin) / ((vmax - vmin) || 1);
             g.appendChild(U.svg('text', {
               x: x + cellW / 2, y: y + cellH / 2 + 4, 'text-anchor': 'middle',
               style: 'font-size:10.5px;font-variant-numeric:tabular-nums;fill:' +
-                (t > 0.58 ? '#fff' : 'var(--text-primary)'),
+                Colors.tintaSobre(t, divergente),
               text: (cfg.fmtCelula || cfg.fmtValor || U.compact)(v)
             }));
           }

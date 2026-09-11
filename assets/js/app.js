@@ -8,14 +8,16 @@
   var telaAtual = null;
   var refs = {};
 
-  /* --------------------------------- tema -------------------------------- */
+  /* ------------------------------- módulos --------------------------------- */
 
-  function aplicarTema(tema) {
-    if (tema === 'sistema') document.documentElement.removeAttribute('data-theme');
-    else document.documentElement.setAttribute('data-theme', tema);
-    ST.salvarPrefs();
-    redesenharGraficos();
-  }
+  var MODULOS = [
+    { id: 'ifdata', nome: 'IF.data',
+      sub: 'Dados do Banco Central · bancos S1 e S2' },
+    { id: 'publicacoes', nome: 'Publicações',
+      sub: 'BR GAAP · IFRS · Pilar 3 · 20-F — conciliação entre fontes' }
+  ];
+
+  function moduloAtual() { return ST.estado.modulo || 'ifdata'; }
 
   function redesenharGraficos() {
     U.$$('.chart').forEach(function (c) { if (c.__redraw) c.__redraw(); });
@@ -26,14 +28,18 @@
   function montarTopo() {
     var topo = U.$('#topbar');
     U.clear(topo);
+    refs.brandSub = U.el('span', { class: 'brand__sub', text: '' });
     topo.appendChild(U.el('div', { class: 'brand' }, [
-      U.el('span', { class: 'brand__mark', text: 'IF.data' }),
-      U.el('span', { class: 'brand__sub',
-        text: 'Análise de instituições financeiras · fonte: Banco Central do Brasil' })
+      U.el('span', { class: 'brand__mark', text: 'Risk Bench' }),
+      refs.brandSub
     ]));
     topo.appendChild(U.el('div', { class: 'topbar__spacer' }));
 
     var ferramentas = U.el('div', { class: 'topbar__tools' });
+    ferramentas.appendChild(UI.segmentado(
+      MODULOS.map(function (m) { return { label: m.nome, value: m.id, hint: m.sub }; }),
+      moduloAtual(), trocarModulo));
+
     refs.badge = U.el('span', { class: 'badge', text: '—' });
     ferramentas.appendChild(refs.badge);
     if (!global.IFDATA_FORCAR_DEMO) {
@@ -42,16 +48,25 @@
         { label: 'Demonstração', value: 'demo', hint: 'Dados sintéticos, sem rede' }
       ], ST.estado.modo === 'demo' ? 'demo' : 'live', definirModo));
     }
-
-    var temaAtual = document.documentElement.getAttribute('data-theme') || 'sistema';
-    ferramentas.appendChild(UI.seletor([
-      { value: 'sistema', label: 'Tema do sistema' },
-      { value: 'light', label: 'Claro' },
-      { value: 'dark', label: 'Escuro' }
-    ], temaAtual, aplicarTema, { 'aria-label': 'Tema' }));
-
     topo.appendChild(ferramentas);
     atualizarBadge();
+    atualizarSubtitulo();
+  }
+
+  function atualizarSubtitulo() {
+    if (!refs.brandSub) return;
+    var m = MODULOS.find(function (x) { return x.id === moduloAtual(); });
+    refs.brandSub.textContent = m ? m.sub : '';
+  }
+
+  function trocarModulo(id) {
+    if (id === moduloAtual()) return;
+    ST.set({ modulo: id });
+    ST.salvarPrefs();
+    atualizarSubtitulo();
+    montarFiltros();
+    montarAbas();
+    irPara((VW.todas(id)[0] || {}).id);
   }
 
   function atualizarBadge() {
@@ -75,6 +90,10 @@
   function montarFiltros() {
     var barra = U.$('#filtros');
     U.clear(barra);
+
+    // O módulo de publicações tem seus próprios recortes, dentro de cada tela.
+    barra.hidden = moduloAtual() !== 'ifdata';
+    if (barra.hidden) return;
 
     refs.selPeriodo = UI.seletor(
       U.allPeriods(2000).map(function (p) { return { value: p, label: U.periodLabel(p) }; }),
@@ -105,6 +124,9 @@
     barra.appendChild(UI.campo('Escala dos valores', refs.selEscala));
 
     barra.appendChild(U.el('div', { class: 'filterbar__actions' }, [
+      UI.alternador('Escopo S1/S2', ST.estado.escopoS1S2 !== false, function (v) {
+        ST.set({ escopoS1S2: v }); ST.salvarPrefs(); recarregar();
+      }, 'Restringe a análise aos segmentos prudenciais S1 e S2, conforme a Segmentação do BCB.'),
       UI.alternador('Anualizar resultados', ST.estado.anualizar, function (v) {
         ST.set({ anualizar: v }); ST.salvarPrefs(); recarregar();
       }, 'A DRE do IF.data é acumulada no ano: marque para converter o resultado em base anual (×12/mês).'),
@@ -147,7 +169,7 @@
   function montarAbas() {
     var abas = U.$('#abas');
     U.clear(abas);
-    VW.todas().forEach(function (v) {
+    VW.todas(moduloAtual()).forEach(function (v) {
       abas.appendChild(U.el('button', {
         class: 'tab', role: 'tab', id: 'tab-' + v.id, title: v.descricao,
         'aria-selected': 'false', 'aria-controls': 'view-' + v.id,
@@ -158,7 +180,8 @@
 
     var main = U.$('#telas');
     U.clear(main);
-    VW.todas().forEach(function (v) {
+    instancias = {};
+    VW.todas(moduloAtual()).forEach(function (v) {
       main.appendChild(U.el('section', {
         class: 'view', id: 'view-' + v.id, role: 'tabpanel',
         'aria-labelledby': 'tab-' + v.id, hidden: true
@@ -167,11 +190,13 @@
   }
 
   function irPara(id) {
-    var alvo = VW.todas().find(function (v) { return v.id === id; }) || VW.todas()[0];
+    var doModulo = VW.todas(moduloAtual());
+    var alvo = doModulo.find(function (v) { return v.id === id; }) || doModulo[0];
+    if (!alvo) return;
     telaAtual = alvo.id;
     if (location.hash !== '#/' + alvo.id) history.replaceState(null, '', '#/' + alvo.id);
 
-    VW.todas().forEach(function (v) {
+    doModulo.forEach(function (v) {
       var aba = U.$('#tab-' + v.id);
       var secao = U.$('#view-' + v.id);
       var ativo = v.id === alvo.id;
@@ -192,7 +217,7 @@
   /** Marca todas as telas como desatualizadas e recarrega a que está visível. */
   function recarregar() {
     CH.hideTip();
-    VW.todas().forEach(function (v) {
+    VW.todas(moduloAtual()).forEach(function (v) {
       var secao = U.$('#view-' + v.id);
       if (secao) secao.dataset.sujo = '1';
     });
@@ -209,14 +234,14 @@
     var prefs = ST.carregarPrefs();
     ST.carregarGrupos();
     if (!ST.estado.escala) ST.estado.escala = 1;
+    if (ST.estado.escopoS1S2 === undefined) ST.estado.escopoS1S2 = true;
+    if (!ST.estado.modulo) ST.estado.modulo = 'ifdata';
+    global.PST.carregar();
     // Alguns ambientes de publicação bloqueiam qualquer chamada a domínio
     // externo. Quem hospeda a página nesse tipo de ambiente define esta
     // variável antes dos scripts: a interface trava no modo demonstração em
     // vez de oferecer um botão "API do BCB" que só falharia.
     if (global.IFDATA_FORCAR_DEMO) ST.estado.modo = 'demo';
-    if (prefs && prefs.tema && prefs.tema !== 'sistema') {
-      document.documentElement.setAttribute('data-theme', prefs.tema);
-    }
     API.configurar({
       base: ST.estado.base || API.BASE_PADRAO,
       modo: ST.estado.modo === 'demo' ? 'demo' : 'live'
@@ -241,15 +266,11 @@
     irPara(inicial);
     carregarRelatorios().then(function (trocou) { if (trocou) recarregar(); });
 
-    if (global.matchMedia) {
-      var mq = global.matchMedia('(prefers-color-scheme: dark)');
-      if (mq.addEventListener) mq.addEventListener('change', redesenharGraficos);
-    }
   }
 
   global.APP = {
-    iniciar: iniciar, irPara: irPara, recarregar: recarregar,
-    definirModo: definirModo, redesenharGraficos: redesenharGraficos
+    iniciar: iniciar, irPara: irPara, recarregar: recarregar, trocarModulo: trocarModulo,
+    definirModo: definirModo, redesenharGraficos: redesenharGraficos, MODULOS: MODULOS
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);

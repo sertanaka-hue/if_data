@@ -4,8 +4,14 @@
   var U = global.U, UI = global.UI, ST = global.ST, API = global.API, CAT = global.CAT;
 
   var registradas = [];
-  function registrar(v) { registradas.push(v); return v; }
-  function todas() { return registradas; }
+  function registrar(v) {
+    v.modulo = v.modulo || 'ifdata';
+    registradas.push(v);
+    return v;
+  }
+  function todas(modulo) {
+    return modulo ? registradas.filter(function (v) { return v.modulo === modulo; }) : registradas;
+  }
 
   /* --------------------------- guarda de render -------------------------- */
 
@@ -43,8 +49,23 @@
         forma: d.forma, demo: !!d.demo, url: d.url, bruto: d.bruto, cadastro: d.cadastro || null,
         campos: res.map, scoreCampos: res.score, semUso: res.unmatched
       };
-      if (!o.naoGuardar) ST.set({ dataset: dataset }, 'dataset');
-      return dataset;
+      return carregarSegmentos(c.anoMes, c.tipo, d.rows).then(function (mapa) {
+        dataset.segmentos = mapa;
+        dataset.temSegmento = mapa.size > 0;
+        dataset.rowsCompletas = dataset.rows;
+        if (escopoAtivo() && mapa.size) {
+          dataset.rows = dataset.rows.filter(function (r) {
+            var seg = mapa.get(r.__id);
+            return seg === 'S1' || seg === 'S2';
+          });
+          dataset.escopoAplicado = true;
+        }
+        dataset.rows.forEach(function (r) {
+          if (!r.__segmento) r.__segmento = mapa.get(r.__id) || null;
+        });
+        if (!o.naoGuardar) ST.set({ dataset: dataset }, 'dataset');
+        return dataset;
+      });
     });
   }
 
@@ -59,6 +80,62 @@
       });
     });
   }
+
+  /* ---------------------------- escopo S1/S2 ----------------------------- */
+
+  var cacheSegmentos = new Map();
+
+  /** Lê o segmento prudencial (S1..S5) de uma linha, se ele estiver ali. */
+  function segmentoDaLinha(row) {
+    var campos = ['SR', 'Segmento', 'Segmentacao', 'TD', 'TC'];
+    for (var i = 0; i < campos.length; i++) {
+      var v = row[campos[i]];
+      if (v == null) continue;
+      var t = String(v).trim().toUpperCase();
+      if (/^S[1-5]$/.test(t)) return t;
+    }
+    return null;
+  }
+
+  /**
+   * Mapa código → segmento. Usa o que já veio no relatório em tela e, quando
+   * ele não traz segmento, busca o relatório de Segmentação do mesmo período.
+   * Falha silenciosa: sem segmento, o escopo simplesmente não filtra nada, em
+   * vez de esvaziar a tela.
+   */
+  function carregarSegmentos(anoMes, tipo, rowsEmTela) {
+    var chave = anoMes + '.' + tipo;
+    if (cacheSegmentos.has(chave)) return Promise.resolve(cacheSegmentos.get(chave));
+
+    var mapa = new Map();
+    (rowsEmTela || []).forEach(function (r) {
+      var seg = segmentoDaLinha(r);
+      if (seg) mapa.set(r.__id, seg);
+    });
+    if (mapa.size) { cacheSegmentos.set(chave, mapa); return Promise.resolve(mapa); }
+
+    return API.valores(anoMes, tipo, '6').then(function (d) {
+      d.rows.forEach(function (r) {
+        var seg = segmentoDaLinha(r);
+        if (!seg) {
+          // o relatório de Segmentação pode trazer o segmento como coluna de dado
+          d.columns.forEach(function (c) {
+            var t = String(r[c] == null ? '' : r[c]).trim().toUpperCase();
+            if (/^S[1-5]$/.test(t)) seg = t;
+            if (!seg && /^s?[1-5]$/i.test(t) && /segment/.test(U.norm(c))) seg = 'S' + t.replace(/\D/g, '');
+          });
+        }
+        if (seg) mapa.set(r.__id, seg);
+      });
+      cacheSegmentos.set(chave, mapa);
+      return mapa;
+    }).catch(function () {
+      cacheSegmentos.set(chave, mapa);
+      return mapa;
+    });
+  }
+
+  function escopoAtivo() { return ST.estado.escopoS1S2 !== false; }
 
   /* ------------------------ escala e formatação -------------------------- */
 
@@ -190,6 +267,15 @@
       comoSair, 'warn');
   }
 
+  /** Aviso quando o escopo S1/S2 está ligado mas o BCB não informou segmento. */
+  function avisoEscopo(dataset) {
+    if (!dataset || !escopoAtivo()) return null;
+    if (dataset.temSegmento) return null;
+    return UI.nota('O escopo S1/S2 está ligado, mas o Banco Central não informou o segmento ' +
+      'prudencial para este período e tipo de instituição. Estão sendo exibidas todas as ' +
+      'instituições do recorte.', 'warn');
+  }
+
   function avisoCampos(dataset) {
     if (!dataset) return null;
     var faltando = ['ativoTotal', 'patrimonioLiquido', 'lucroLiquido'].filter(function (c) {
@@ -237,6 +323,8 @@
 
   global.VW = {
     registrar: registrar, todas: todas, ctx: ctx, novaGeracao: novaGeracao,
+    segmentoDaLinha: segmentoDaLinha, carregarSegmentos: carregarSegmentos,
+    escopoAtivo: escopoAtivo, avisoEscopo: avisoEscopo,
     carregar: carregar, carregarSerie: carregarSerie,
     ESCALAS: ESCALAS, escala: escala, valor: valor, ehRazao: ehRazao, ehContagem: ehContagem,
     fmtColuna: fmtColuna, decimaisColuna: decimaisColuna, unidadeColuna: unidadeColuna,
