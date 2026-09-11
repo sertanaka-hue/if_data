@@ -51,20 +51,54 @@ python3 build/gerar-arquivo-unico.py
 
 BR GAAP, IFRS, Pilar 3 e 20-F **não têm API**. São PDFs e planilhas publicados
 no site de relações com investidores de cada banco, na CVM e na SEC, cada um com
-layout próprio. Um sistema que roda só no navegador não consegue baixá-los (os
-sites não liberam acesso externo) nem extrair tabelas de PDF.
+layout próprio.
 
-O desenho contorna isso sem fingir que o problema não existe:
+Duas coisas diferentes costumam ser confundidas aqui:
+
+| | No navegador |
+|---|---|
+| **Baixar** o PDF do site do banco | Não dá — os sites não liberam acesso de outra origem. |
+| **Ler** um PDF que o usuário abre | Dá, e é o que o sistema faz. |
+
+Então o desenho é:
 
 - o **IF.data entra automático** e vira linha de base — ele já publica PR, RWA,
   índices de capital e resultado;
-- as quatro publicações entram por **importação de planilha** ou lançamento
-  manual, com o documento e a nota de origem registrados junto do número;
+- as publicações entram por **leitura do PDF no próprio navegador**, por
+  importação de planilha ou por lançamento manual, sempre com o documento e a
+  página registrados junto do número;
 - o sistema faz o que é realmente difícil: **conciliar as fontes e apontar as
   divergências**.
 
-O formato de importação é o contrato. Um extrator automático, no futuro, só
+O formato de importação é o contrato. Um extrator em servidor, no futuro, só
 precisa gerar esse CSV — nada mais no sistema muda.
+
+### Leitura de PDF
+
+A tela **Importar PDF** abre o documento com o [pdf.js](https://mozilla.github.io/pdf.js/)
+embutido em `assets/vendor/pdfjs/`, reconstrói as linhas a partir das posições
+do texto, acha os rótulos do catálogo e propõe os números daquela linha.
+
+Três decisões que moldam o resultado:
+
+- **A extração propõe; o analista lança.** Cada proposta vem com a página e a
+  linha de origem, e uma tabela traz vários trimestres na mesma linha — quem
+  escolhe a coluna certa é quem conhece o documento. Num banco, número sem
+  rastro não vale nada.
+- **Rótulo mais específico vence.** "Capital Principal" é substring de "Índice
+  de Capital Principal"; sem essa regra, o índice roubaria o valor em reais.
+- **Nem todo número é medida.** CNPJ, CPF, datas e horas são mascarados antes da
+  varredura, e parênteses com texto — "(1 dia, 99%)", "(12 meses)" — também;
+  parêntese só com dígitos permanece, porque é a notação contábil de negativo.
+
+A biblioteca fica versionada no repositório de propósito: a leitura precisa
+funcionar em rede corporativa que bloqueie CDN externa. São 1,8 MB, os únicos
+do projeto que **não** entram no arquivo único — a cópia portátil precisa da
+pasta `assets/vendor/pdfjs/` ao lado para ler PDF; sem ela, só essa tela deixa
+de funcionar.
+
+**Limite conhecido:** PDF digitalizado como imagem não tem texto para extrair.
+Reconhecimento óptico não está no escopo — nesses casos o lançamento é manual.
 
 ### As cinco telas
 
@@ -75,6 +109,7 @@ precisa gerar esse CSV — nada mais no sistema muda.
 | **Divergências** | Conciliação ordenada pelo tamanho da diferença, com mapa de calor banco × métrica e exportação. |
 | **Lançamentos** | Importação de CSV, lançamento manual, modelo de planilha e catálogo de identificadores. |
 | **Onde buscar** | Atalhos de busca por banco para RI, Pilar 3, 20-F na SEC e CVM. |
+| **Importar PDF** | Abre o documento no navegador, reconhece os rótulos do catálogo e propõe os números, com a página de origem. |
 
 ### O catálogo de indicadores
 
@@ -252,8 +287,11 @@ assets/js/
   views-dados.js            Consulta, Comparar, Série temporal
   views-analise.js          Conjuntos, Análise de conjunto, Mercado, Diagnóstico
   pub-catalog.js            fontes, famílias e as 42 métricas do módulo Publicações
+  pdf-extract.js            leitura de PDF no navegador: linhas, números, rótulos
   pub-store.js              lançamentos, importação e motor de conciliação
   views-publicacoes.js      Cobertura, Comparativo, Divergências, Lançamentos, Onde buscar
+  views-pdf.js              Importar PDF
+assets/vendor/pdfjs/        pdf.js embutido (Apache 2.0), não editado à mão
   app.js                    módulos, filtros globais, abas
 ```
 

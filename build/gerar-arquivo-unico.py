@@ -38,8 +38,13 @@ def gerar():
         "       Não edite aqui: edite os arquivos em assets/ e gere de novo. -->",
     )
 
-    if "assets/js/" in html or "assets/css/" in html:
-        raise SystemExit("erro: sobrou referência a arquivo externo")
+    # Só interessa atributo que o navegador vai buscar — comentários no código
+    # citam caminhos e não são referência. O leitor de PDF (assets/vendor/pdfjs)
+    # fica de fora de propósito: são 1,8 MB que não cabem embutidos, e a tela de
+    # importação de PDF degrada sozinha quando a pasta não está ao lado.
+    pendentes = re.findall(r'(?:src|href)="(assets/(?:js|css)/[^"]+)"', html)
+    if pendentes:
+        raise SystemExit("erro: sobraram referências externas: %s" % pendentes)
 
     io.open(SAIDA, "w", encoding="utf-8").write(html)
     print("gerado: %s (%.0f KB)" % (SAIDA, os.path.getsize(SAIDA) / 1024))

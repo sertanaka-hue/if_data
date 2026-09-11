@@ -199,8 +199,72 @@
       definicao: 'Fatia do RWA apurada por modelo interno autorizado, e não pela padronizada.' }
   ];
 
+  /* ---------------------------------------------------------------------
+     Rótulos usados para achar a métrica dentro de um PDF. São comparados
+     contra o texto normalizado da linha (sem acento, minúsculo), por isso
+     ficam escritos assim aqui. Vários por métrica porque cada banco nomeia a
+     linha do seu jeito. Métrica sem rótulo não é procurada automaticamente —
+     continua disponível para lançamento manual.
+     --------------------------------------------------------------------- */
+  var ROTULOS = {
+    /* Os rótulos de índice não podem descrever a linha do capital: se um rótulo
+       de "Índice de Capital Principal" casar com a linha "Capital Principal
+       (CET1)", o índice rouba o valor em reais. Por isso aqui só entram
+       expressões que identificam o próprio índice. */
+    basileia: ['indice de basileia', 'indice de adequacao de capital',
+               'razao de capital total', 'total capital ratio', 'indice de capital total'],
+    ic_principal: ['indice de capital principal', 'cet1 ratio',
+                   'indice cet1', 'common equity tier 1 ratio'],
+    in1: ['indice de nivel i', 'indice de capital nivel i', 'tier 1 ratio', 'nivel i ratio'],
+    razao_alavancagem: ['razao de alavancagem', 'indice de alavancagem', 'leverage ratio'],
+    pr: ['patrimonio de referencia', 'capital regulamentar total', 'total capital'],
+    capital_principal: ['capital principal', 'common equity tier 1', 'cet1'],
+    nivel_1: ['nivel i', 'capital de nivel i', 'tier 1 capital'],
+    rwa_total: ['ativos ponderados pelo risco', 'total de ativos ponderados', 'rwa total',
+                'montante rwa', 'total rwa', 'risk weighted assets'],
+    rwa_credito: ['rwa para risco de credito', 'rwacpad', 'risco de credito rwa',
+                  'ativos ponderados risco de credito'],
+    rwa_mercado: ['rwa para risco de mercado', 'rwampad', 'risco de mercado rwa'],
+    rwa_operacional: ['rwa para risco operacional', 'rwaopad', 'risco operacional rwa'],
+    densidade_rwa: ['densidade de rwa', 'rwa sobre ativo', 'rwa density'],
+    lcr: ['indice de liquidez de curto prazo', 'liquidity coverage ratio', 'lcr'],
+    hqla: ['ativos de alta liquidez', 'total de hqla', 'hqla', 'high quality liquid assets'],
+    saidas_liquidas: ['saidas de caixa liquidas', 'total de saidas liquidas',
+                      'saidas liquidas totais de caixa'],
+    nsfr: ['indice de liquidez de longo prazo', 'net stable funding ratio', 'nsfr'],
+    var_1d99: ['var total', 'valor em risco', 'var global', 'var da carteira', 'value at risk'],
+    var_medio: ['var medio', 'media do var', 'var medio do periodo'],
+    var_maximo: ['var maximo', 'maximo do var', 'var maximo do periodo'],
+    svar: ['var estressado', 'stressed var', 'svar'],
+    var_juros: ['var taxa de juros', 'var juros', 'fator juros'],
+    var_cambio: ['var cambio', 'var moedas', 'fator cambial', 'fator cambio'],
+    var_acoes: ['var acoes', 'var renda variavel', 'fator acoes'],
+    delta_eve: ['delta eve', 'variacao do valor economico', 'eve'],
+    delta_nii: ['delta nii', 'variacao da margem financeira', 'nii'],
+    lucro_liquido: ['lucro liquido', 'resultado liquido', 'lucro prejuizo liquido', 'net income'],
+    lucro_recorrente: ['lucro liquido recorrente', 'resultado recorrente', 'lucro recorrente'],
+    pl_contabil: ['patrimonio liquido', 'total do patrimonio liquido', 'shareholders equity'],
+    roae: ['retorno sobre o patrimonio liquido medio', 'roae', 'retorno sobre patrimonio'],
+    roaa: ['retorno sobre o ativo total medio', 'roaa', 'retorno sobre ativos'],
+    nim: ['margem financeira liquida', 'nim', 'net interest margin'],
+    eficiencia: ['indice de eficiencia', 'efficiency ratio'],
+    custo_credito: ['custo do credito', 'despesa de provisao sobre carteira'],
+    ldr: ['carteira sobre captacoes', 'loan to deposit', 'credito sobre depositos'],
+    concentracao_funding: ['concentracao dos maiores depositantes', 'maiores depositantes'],
+    prazo_captacao: ['prazo medio das captacoes', 'prazo medio de captacao'],
+    backtest_excecoes: ['excecoes de backtesting', 'numero de excecoes', 'backtesting excecoes'],
+    dv01: ['dv01', 'pv01', 'sensibilidade a um ponto base']
+  };
+
+  METRICAS.forEach(function (m) { m.rotulos = ROTULOS[m.id] || []; });
+
   var METRICA_POR_ID = {};
   METRICAS.forEach(function (m) { METRICA_POR_ID[m.id] = m; });
+
+  /** Métricas que o extrator de PDF sabe procurar. */
+  function metricasProcuraveis() {
+    return METRICAS.filter(function (m) { return m.rotulos.length; });
+  }
 
   function metricasDaFamilia(familiaId) {
     return METRICAS.filter(function (m) { return m.familia === familiaId; });
@@ -271,6 +335,7 @@
     FAMILIAS: FAMILIAS, METRICAS: METRICAS, METRICA_POR_ID: METRICA_POR_ID,
     COLUNAS_IMPORT: COLUNAS_IMPORT,
     metricasDaFamilia: metricasDaFamilia, metricasDaFonte: metricasDaFonte,
+    metricasProcuraveis: metricasProcuraveis, ROTULOS: ROTULOS,
     fontesComparaveis: fontesComparaveis, periodosDoEscopo: periodosDoEscopo,
     modeloCSV: modeloCSV, catalogoCSV: catalogoCSV
   };
