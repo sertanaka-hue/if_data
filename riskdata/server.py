@@ -13,7 +13,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
 from . import __version__
+from . import cva as mod_cva
 from .anbima import ClienteANBIMA
+from .enriquecimento import TabelaEnriquecimento
 from .cvm import (DIR_CACHE, ErroFonteDados, RepositorioCVM, competencia_de_data,
                   competencias_recentes)
 from .demo import COMPETENCIA_DEMO, semear
@@ -66,17 +68,40 @@ class Trabalhos:
 class Aplicacao:
     """Estado compartilhado entre as requisições."""
 
-    def __init__(self, dir_cache: str = DIR_CACHE, modo_demo: bool = False):
+    def __init__(self, dir_cache: str = DIR_CACHE, modo_demo: bool = False,
+                 enriquecimento: Optional[str] = None):
+        # mensagens precede qualquer chamada a _log
+        self.mensagens = []
         self.repo = RepositorioCVM(dir_cache=dir_cache, log=self._log)
         self.anbima = ClienteANBIMA(log=self._log)
-        self.motor = MotorLookthrough(self.repo, self.anbima, log=self._log)
+        self.caminho_enriquecimento = enriquecimento or os.environ.get(
+            "RISKDATA_ENRIQUECIMENTO") or os.path.join(dir_cache, "enriquecimento.csv")
+        self._mtime_enriquecimento = None
+        self.enriquecimento = TabelaEnriquecimento()
+        self._recarregar_enriquecimento()
+        self.motor = MotorLookthrough(self.repo, self.anbima, log=self._log,
+                                      enriquecimento=self.enriquecimento)
         self.trabalhos = Trabalhos()
         self.relatorios = {}
         self.trava_relatorios = threading.Lock()
         self.modo_demo = modo_demo
-        self.mensagens = []
         if modo_demo:
             semear(self.repo)
+
+    def _recarregar_enriquecimento(self):
+        """Recarrega a planilha de enriquecimento quando ela muda em disco."""
+        caminho = self.caminho_enriquecimento
+        if not caminho or not os.path.isfile(caminho):
+            return
+        mtime = os.path.getmtime(caminho)
+        if mtime == self._mtime_enriquecimento:
+            return
+        tabela = TabelaEnriquecimento.carregar(caminho)
+        self._mtime_enriquecimento = mtime
+        self.enriquecimento = tabela
+        if hasattr(self, "motor"):
+            self.motor.enriquecimento = tabela
+        self._log(f"enriquecimento: {tabela.linhas} linha(s) de {caminho}")
 
     def _log(self, mensagem: str):
         carimbo = datetime.now().strftime("%H:%M:%S")
@@ -137,6 +162,13 @@ class Aplicacao:
         profundidade = int(parametros.get("profundidade") or PROFUNDIDADE_PADRAO)
         info_publica = bool(parametros.get("info_publica", True))
         acp = float(parametros.get("acp", ACP_CONSERVACAO))
+        metodo_cva = parametros.get("metodo_cva") or mod_cva.METODO_ALTERNATIVO
+        if metodo_cva not in (mod_cva.METODO_ALTERNATIVO, mod_cva.METODO_COMPLETO):
+            raise ValueError("Abordagem do RWACVA inválida.")
+        metodo_ccr = parametros.get("metodo_ccr") or mod_cva.CCR_SACCR
+        if metodo_ccr not in (mod_cva.CCR_SACCR, mod_cva.CCR_CEM):
+            raise ValueError("Método de apuração da exposição inválido.")
+        self._recarregar_enriquecimento()
 
         if not self.repo.obter_fundo(cnpj):
             raise ValueError(
@@ -151,11 +183,13 @@ class Aplicacao:
             "cvm_cadastro": "dados.cvm.gov.br/dados/FI/CAD",
             "cvm_cda": f"dados.cvm.gov.br/dados/FI/DOC/CDA ({competencia})",
             "anbima": self.anbima.status(),
+            "enriquecimento": self.enriquecimento.status(),
             "modo_demo": self.modo_demo,
         }
         relatorio = montar_relatorio(
             resultado, competencia, data_consulta, valor_posicao=valor_posicao,
-            acp=acp, info_publica=info_publica, origem_dados=origem)
+            acp=acp, info_publica=info_publica, origem_dados=origem,
+            metodo_cva=metodo_cva, metodo_ccr=metodo_ccr)
 
         ident = uuid.uuid4().hex[:12]
         relatorio["id"] = ident
@@ -183,6 +217,7 @@ class Aplicacao:
             "competencias_carregadas": self.repo.competencias_carregadas(),
             "competencias_sugeridas": competencias_recentes(24),
             "anbima": self.anbima.status(),
+            "enriquecimento": self.enriquecimento.status(),
             "cache": self.repo.dir_cache,
             "profundidade_padrao": PROFUNDIDADE_PADRAO,
             "acp_padrao": ACP_CONSERVACAO,
@@ -328,13 +363,19 @@ class Manipulador(BaseHTTPRequestHandler):
 
 
 def executar(host: str = "127.0.0.1", porta: int = 8000,
-             dir_cache: str = DIR_CACHE, modo_demo: bool = False):
-    Manipulador.app = Aplicacao(dir_cache=dir_cache, modo_demo=modo_demo)
+             dir_cache: str = DIR_CACHE, modo_demo: bool = False,
+             enriquecimento: Optional[str] = None):
+    Manipulador.app = Aplicacao(dir_cache=dir_cache, modo_demo=modo_demo,
+                                enriquecimento=enriquecimento)
     servidor = ThreadingHTTPServer((host, porta), Manipulador)
     print(f"Risk Data {__version__} em http://{host}:{porta}")
     print(f"Cache: {dir_cache}")
     if modo_demo:
         print("Modo demonstração ativo (carteira sintética carregada).")
+    status_enriquecimento = Manipulador.app.enriquecimento.status()
+    if status_enriquecimento["ativa"]:
+        print(f"Enriquecimento: {status_enriquecimento['linhas']} linha(s) de "
+              f"{status_enriquecimento['caminho']}")
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:

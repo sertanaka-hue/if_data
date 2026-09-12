@@ -1,0 +1,9 @@
+codigo;cnpj_emissor;descricao;porte_emissor;demonstracoes_auditadas;ativo_problematico;categoria_risco_if;prazo_original;listada_em_bolsa;investment_grade;valor_nocional;valor_reposicao;prazo_derivativo;liquidacao_ccp
+VALE28;;;grande;sim;nao;;;;sim;;;;
+LREN31;;;grande;sim;nao;;;;sim;;;;
+CDB-ITAU-2027;;;;;;A;720;;sim;;;;
+LFSN-BTG-2032;;;;;;B;2880;;;;;;
+PETR4;;;grande;sim;nao;;;sim;sim;;;;
+VALE3;;;grande;sim;nao;;;sim;sim;;;;
+ITUB4;;;grande;sim;nao;;;sim;sim;;;;
+SWAP-DI-PRE;;;;;;;;;;250000000;12000000;2,5;nao

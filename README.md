@@ -8,7 +8,8 @@ outros fundos, o Risk Data abre cada um deles recursivamente até chegar aos
 **ativos finais**, atribui a cada ativo o **Fator de Ponderação de Risco (FPR)**
 correspondente — **citando o artigo e a resolução que originaram o FPR** — e
 totaliza o RWA e o capital requerido em dois cenários: **carteira de negociação**
-e **carteira bancária**.
+e **carteira bancária**, acrescidos da parcela **RWA<sub>CVA</sub>**, comum aos
+dois livros.
 
 ---
 
@@ -129,6 +130,83 @@ somente o risco de crédito de contraparte (Res. BCB 229/2022, art. 3º, II).
 Resolução BCB nº 229/2022: `RWA = Σ (exposição × FPR)` (art. 2º), com a carteira
 aberta por transparência.
 
+### Parcela RWA<sub>CVA</sub> — comum aos dois cenários
+
+Resolução BCB nº 291/2023. O art. 3º alcança tanto a carteira bancária quanto a
+de negociação, de modo que a parcela é apurada uma vez e somada ao RWA dos dois
+cenários, no indicador **RWA com CVA**.
+
+Abordagem **alternativa** (art. 2º, § 2º) — padrão, dispensa prazo e não
+reconhece hedge:
+
+```
+RWA_CVA = 0,1 × (1/F) × √( 0,25 × (Σᵢ EXPᵢ)² + 0,75 × Σᵢ EXPᵢ² )
+```
+
+Abordagem **completa** (art. 2º, caput), com reconhecimento de hedge de crédito:
+
+```
+RWA_CVA = 2,33 × 0,01 × (1/F) × √( (Σᵢ 0,5 × (dᵢ·EXPᵢ − Σₕ dᵢʰ·Bᵢʰ) − Σ dᵢₙd·Bᵢₙd)²
+                                  + Σᵢ 0,75 × (dᵢ·EXPᵢ − Σₕ dᵢʰ·Bᵢʰ)² )
+```
+
+com o fator de desconto `d = (1 − e^(−0,05 × M)) / 0,05` (incisos II, IV e VI) e
+o prazo médio ponderado por valor de referência `Mᵢ = Σ(M₀ × R₀) / Σ R₀`
+(inciso II, alínea "a").
+
+`EXPᵢ` é a exposição por contraparte apurada pelos Anexos I (SA-CCR, com alfa de
+1,4) ou II (CEM) da Resolução BCB nº 229/2022 — a escolha fica na tela. Para
+derivativos de carteira de fundo, quando o valor de reposição e o ganho potencial
+futuro não podem ser determinados, aplicam-se as faculdades do art. 17, §§ 5º e
+6º, daquela resolução: o nocional serve de valor de reposição e o ganho potencial
+futuro usa o fator de 15%.
+
+**Exclusões do art. 2º, § 1º**, reconhecidas automaticamente:
+
+| Inciso | Operação excluída | Como é identificada |
+| --- | --- | --- |
+| I | Liquidada em câmara com interposição de contraparte central | Derivativo padronizado de bolsa (futuro, opção) ou contraparte reconhecida como CCP; pode ser forçado pelo campo `liquidacao_ccp` |
+| II | Contraparte é a União, o Banco Central ou organismo multilateral / EMD | Campo `contraparte_isenta` |
+| III | Swap de crédito em que a instituição recebe o risco | Campo `receptor_risco_credito` |
+
+Derivativos sem valor de referência ficam fora da parcela e são listados
+nominalmente, com a advertência de que o RWA<sub>CVA</sub> apurado está
+subestimado nessa medida.
+
+---
+
+## Planilha de enriquecimento
+
+A CDA informa o que o fundo detém, mas não os atributos de contraparte que
+discriminam o enquadramento. Uma planilha CSV mantida pela própria instituição
+preenche essa lacuna e elimina as pendências correspondentes:
+
+```bash
+python3 run.py servir --enriquecimento caminho/planilha.csv
+```
+
+Sem o parâmetro, o sistema procura `cache/enriquecimento.csv` e recarrega o
+arquivo sozinho sempre que ele muda em disco. Há um exemplo em
+`samples/enriquecimento_exemplo.csv`.
+
+Colunas de identificação (o casamento ocorre nesta ordem): `codigo`,
+`cnpj_emissor`, `descricao`. Colunas de atributo, todas opcionais:
+
+| Coluna | Efeito |
+| --- | --- |
+| `porte_emissor` | `grande`, `pequeno` ou `medio` — leva a debênture de 100% (art. 41) a 65% (art. 35) ou 85% (art. 36) |
+| `demonstracoes_auditadas`, `ativo_problematico` | Completam os requisitos do art. 35 |
+| `categoria_risco_if`, `prazo_original` | Categoria A/B/C e prazo, para o FPR do art. 33 |
+| `listada_em_bolsa` | Distingue o art. 43, III (250%) do art. 43, I (400%) |
+| `investment_grade` | Reduz o RW do RWA<sub>DRC</sub> de 30% para 6% (art. 10, II) |
+| `rating_soberano` | FPR dos arts. 24 e 25 |
+| `valor_nocional`, `valor_reposicao`, `prazo_derivativo` | Tornam o RWA<sub>CVA</sub> apurável |
+| `contraparte`, `liquidacao_ccp` | Agrupamento por contraparte e exclusão do art. 2º, § 1º, I |
+| `classe_priorizacao` | Classe sênior apurada como fundo (art. 19, § 2º) |
+
+Números aceitam vírgula decimal e booleanos aceitam `sim`/`nao`. A planilha
+nunca sobrescreve um atributo já presente.
+
 ---
 
 ## Regras de look-through implementadas
@@ -184,12 +262,15 @@ riskdata/
   taxonomy.py     classificação dos ativos da CDA em regras
   cvm.py          download e indexação em SQLite dos dados abertos da CVM
   anbima.py       Feed de Dados da ANBIMA (opcional)
+  enriquecimento.py  planilha de atributos ausentes na CDA
   lookthrough.py  abertura recursiva com as travas dos arts. 17 e 18
-  engine.py       motores RWACPAD e RWADRC e consolidação
+  cva.py          parcela RWACVA (Resolução BCB nº 291/2023)
+  engine.py       motores RWACPAD, RWADRC e RWACVA e consolidação
   report.py       montagem do relatório e exportadores CSV/XML
   server.py       API HTTP e servidor da interface
   demo.py         carteira sintética de demonstração
 web/              interface Risk Data (HTML, CSS e JavaScript)
+samples/          planilha de enriquecimento de exemplo
 docs/             normativos de referência
 tests/            verificação dos cálculos
 ```
@@ -218,13 +299,13 @@ python3 -m unittest discover -s tests -v
 ## Limites conhecidos
 
 - O enquadramento parte do que a CDA/CVM publica. Atributos de contraparte
-  (porte, rating, categoria de risco) não constam da CDA e precisam vir de base
-  interna ou de provedor externo.
+  (porte, rating, categoria de risco, nocional e prazo de derivativo) não constam
+  da CDA: alimente a planilha de enriquecimento para eliminá-los das pendências.
 - Mitigadores de risco de crédito (Circular nº 3.809/2016) ainda não reduzem a
   exposição: o efeito de colateral, garantia e acordo de compensação deve ser
   aplicado sobre o resultado.
-- Derivativos aparecem no relatório com a exposição sinalizada como pendente: o
-  SA-CCR (Anexo I) e o CEM (Anexo II) exigem nocional, valor de reposição e
-  conjunto de compensação, que a CDA não fornece.
-- As parcelas RWA<sub>MPAD</sub>, RWA<sub>CVA</sub> e RWA<sub>SP</sub> não são
-  calculadas.
+- O RWA<sub>CVA</sub> é apurado por contraparte, sem conjunto de compensação
+  (*netting set*): a exposição de cada derivativo é somada, sem compensação
+  entre operações da mesma contraparte.
+- As parcelas RWA<sub>MPAD</sub> (risco de mercado) e RWA<sub>SP</sub> (risco
+  operacional) não são calculadas.

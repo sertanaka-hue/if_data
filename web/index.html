@@ -24,6 +24,7 @@
   <div class="topo-espaco"></div>
   <span class="selo" id="seloFonte"><span class="ponto"></span><span id="seloFonteTexto">Verificando fontes…</span></span>
   <span class="selo" id="seloAnbima"><span class="ponto"></span><span id="seloAnbimaTexto">ANBIMA</span></span>
+  <span class="selo" id="seloEnriquecimento"><span class="ponto"></span><span id="seloEnriquecimentoTexto">Enriquecimento</span></span>
 </header>
 
 <div class="container">
@@ -94,6 +95,20 @@
           </select>
         </div>
         <div class="campo">
+          <label for="metodoCva">Abordagem do RWA<sub>CVA</sub></label>
+          <select id="metodoCva">
+            <option value="alternativa" selected>Alternativa — art. 2º, § 2º</option>
+            <option value="completa">Completa — art. 2º, caput</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label for="metodoCcr">Exposição do derivativo</label>
+          <select id="metodoCcr">
+            <option value="sa-ccr" selected>SA-CCR — Anexo I</option>
+            <option value="cem">CEM — Anexo II</option>
+          </select>
+        </div>
+        <div class="campo">
           <label for="acp">ACP de conservação</label>
           <select id="acp">
             <option value="0">Sem adicional (8,0%)</option>
@@ -135,6 +150,15 @@
         <div class="grade-resumo" id="indicadores"></div>
         <div id="avisosCenario" style="margin-top:16px"></div>
       </div>
+    </section>
+
+    <section class="cartao" id="cartaoCva">
+      <div class="cartao-cabecalho">
+        <h2>Parcela RWA<sub>CVA</sub></h2>
+        <span class="legenda">Risco de variação do valor dos derivativos pela qualidade
+          creditícia da contraparte — Resolução BCB nº 291/2023</span>
+      </div>
+      <div class="cartao-corpo" id="corpoCva"></div>
     </section>
 
     <section class="cartao" id="cartaoPendencias">

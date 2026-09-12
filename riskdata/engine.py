@@ -17,9 +17,11 @@ Cenário 2 - Carteira bancária
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from . import cva as mod_cva
 from . import regulation as reg
 from .lookthrough import Folha, ResultadoLookthrough
-from .taxonomy import classificar_drc, classificar_fpr, formatar_cnpj
+from .taxonomy import (NAT_DERIVATIVO, classificar_drc, classificar_fpr,
+                       formatar_cnpj)
 
 CENARIO_NEGOCIACAO = "negociacao"
 CENARIO_BANCARIA = "bancaria"
@@ -229,10 +231,66 @@ def consolidar(linhas: List[LinhaRelatorio], cenario: str,
     return resumo
 
 
+# ---------------------------------------------------------------------------
+# Parcela RWACVA (Resolução BCB nº 291/2023)
+# ---------------------------------------------------------------------------
+
+def extrair_derivativos(folhas: List[Folha]) -> List[mod_cva.Derivativo]:
+    """Converte as folhas de natureza derivativa em operações para o CVA.
+
+    O nocional e o valor de reposição são escalados pela participação acumulada
+    da instituição na cadeia de fundos (art. 16 da Res. BCB 229/2022) e pela
+    eventual majoração do art. 17, § 7º, na mesma medida aplicada ao valor.
+    """
+    derivativos = []
+    for folha in folhas:
+        ativo = folha.ativo
+        if folha.residual or ativo.natureza != NAT_DERIVATIVO:
+            continue
+        attr = ativo.atributos or {}
+        escala = folha.fator * folha.majoracao
+
+        def _escalar(chave):
+            bruto = attr.get(chave)
+            return float(bruto) * escala if bruto is not None else None
+
+        derivativos.append(mod_cva.Derivativo(
+            descricao=ativo.descricao or ativo.tipo_ativo or ativo.tipo_aplicacao,
+            tipo=ativo.tipo_aplicacao or ativo.tipo_ativo,
+            contraparte=(attr.get("contraparte") or ativo.emissor or "").strip(),
+            nocional=_escalar("valor_nocional"),
+            valor_reposicao=_escalar("valor_reposicao"),
+            prazo_anos=attr.get("prazo_derivativo"),
+            valor_mercado=folha.valor_atribuido,
+            liquidacao_ccp=attr.get("liquidacao_ccp"),
+            contraparte_isenta=bool(attr.get("contraparte_isenta")),
+            receptor_risco_credito=bool(attr.get("receptor_risco_credito")),
+            fundo_nome=folha.fundo_nome, fundo_cnpj=folha.fundo_cnpj,
+            nivel=folha.nivel))
+    return derivativos
+
+
+def calcular_cva(resultado: ResultadoLookthrough,
+                 metodo: str = mod_cva.METODO_ALTERNATIVO,
+                 metodo_ccr: str = mod_cva.CCR_SACCR,
+                 hedges=None) -> mod_cva.ResultadoCVA:
+    """Apura a parcela RWACVA sobre os derivativos da carteira aberta."""
+    derivativos = extrair_derivativos(resultado.folhas)
+    return mod_cva.calcular(derivativos, hedges=hedges, metodo=metodo,
+                            metodo_ccr=metodo_ccr, fator_f=reg.FATOR_F)
+
+
 def calcular_cenarios(resultado: ResultadoLookthrough,
                       valor_contabil_cotas: Optional[float] = None,
-                      acp: float = ACP_CONSERVACAO) -> dict:
-    """Roda os dois cenários sobre o mesmo conjunto de ativos finais."""
+                      acp: float = ACP_CONSERVACAO,
+                      metodo_cva: str = mod_cva.METODO_ALTERNATIVO,
+                      metodo_ccr: str = mod_cva.CCR_SACCR) -> dict:
+    """Roda os dois cenários sobre o mesmo conjunto de ativos finais.
+
+    A parcela RWACVA é comum aos dois cenários: o art. 3º da Resolução BCB
+    nº 291/2023 alcança tanto os instrumentos da carteira bancária quanto os da
+    carteira de negociação.
+    """
     linhas_banc = calcular_bancaria(resultado.folhas)
     linhas_neg = calcular_negociacao(resultado.folhas)
     return {
@@ -245,6 +303,7 @@ def calcular_cenarios(resultado: ResultadoLookthrough,
             "linhas": linhas_neg,
             "resumo": consolidar(linhas_neg, CENARIO_NEGOCIACAO, None, acp),
         },
+        "cva": calcular_cva(resultado, metodo=metodo_cva, metodo_ccr=metodo_ccr),
     }
 
 
@@ -272,6 +331,8 @@ def consolidar_pendencias(resultado: ResultadoLookthrough,
             registro["base_legal"] = f"{item.get('resolucao', '')}, {item['artigo']}"
 
     for cenario, dados in cenarios.items():
+        if not isinstance(dados, dict) or "linhas" not in dados:
+            continue  # a chave "cva" carrega um ResultadoCVA, não linhas
         for linha in dados["linhas"]:
             for campo in linha.faltantes:
                 registro = agregado.setdefault(campo, {

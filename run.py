@@ -20,7 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from riskdata import __version__
 from riskdata.anbima import ClienteANBIMA
+from riskdata import cva as mod_cva
 from riskdata.cvm import DIR_CACHE, RepositorioCVM, competencia_de_data
+from riskdata.enriquecimento import TabelaEnriquecimento
 from riskdata.demo import COMPETENCIA_DEMO, semear
 from riskdata.engine import ACP_CONSERVACAO
 from riskdata.lookthrough import PROFUNDIDADE_PADRAO, MotorLookthrough
@@ -35,7 +37,7 @@ def _registrar(mensagem):
 
 def comando_servir(args):
     executar(host=args.host, porta=args.porta, dir_cache=args.cache,
-             modo_demo=args.demo)
+             modo_demo=args.demo, enriquecimento=args.enriquecimento)
 
 
 def comando_carregar(args):
@@ -68,7 +70,10 @@ def comando_demo(args):
 def comando_analisar(args):
     repo = RepositorioCVM(dir_cache=args.cache, log=_registrar)
     anbima = ClienteANBIMA(log=_registrar)
-    motor = MotorLookthrough(repo, anbima, log=_registrar)
+    tabela = TabelaEnriquecimento.carregar(args.enriquecimento)
+    if not tabela.vazia:
+        print(f"Enriquecimento: {tabela.linhas} linha(s) de {args.enriquecimento}")
+    motor = MotorLookthrough(repo, anbima, log=_registrar, enriquecimento=tabela)
 
     data_consulta = args.data or date.today().isoformat()
     competencia = args.competencia or competencia_de_data(data_consulta)
@@ -93,7 +98,9 @@ def comando_analisar(args):
     relatorio = montar_relatorio(
         resultado, competencia, data_consulta, valor_posicao=args.valor,
         acp=args.acp, info_publica=not args.info_restrita,
-        origem_dados={"cvm_cda": competencia, "anbima": anbima.status()})
+        origem_dados={"cvm_cda": competencia, "anbima": anbima.status(),
+                      "enriquecimento": tabela.status()},
+        metodo_cva=args.metodo_cva, metodo_ccr=args.metodo_ccr)
 
     if args.formato == "csv":
         conteudo = exportar_csv(relatorio, args.cenario)
@@ -138,6 +145,11 @@ def _resumo_texto(relatorio, cenario):
         f"Capital (F=8%) .... R$ {resumo['capital_minimo']:,.2f}",
         f"Capital com ACP ... R$ {resumo['capital_com_acp']:,.2f}",
         "-" * 92,
+        f"RWA CVA ........... R$ {resumo.get('rwa_cva', 0.0):,.2f}"
+        f"   ({relatorio['cva'].get('base_legal', '')})",
+        f"RWA com CVA ....... R$ {resumo.get('rwa_com_cva', 0.0):,.2f}",
+        f"Capital com CVA ... R$ {resumo.get('capital_com_cva', 0.0):,.2f}",
+        "-" * 92,
         f"{'ATIVO':<40}{'VALOR':>15}{'FPR/RW':>9}{'RWA':>16}  ARTIGO",
     ]
     for linha in sorted(dados["linhas"], key=lambda x: -x["rwa"]):
@@ -168,6 +180,9 @@ def principal():
                     f"investimento e apuração de RWA.")
     parser.add_argument("--cache", default=DIR_CACHE,
                         help="diretório de cache dos dados públicos")
+    parser.add_argument("--enriquecimento",
+                        help="planilha CSV com atributos de contraparte ausentes "
+                             "na CDA (porte, rating, nocional e prazo)")
     sub = parser.add_subparsers(dest="comando", required=True)
 
     p = sub.add_parser("servir", help="sobe a interface web")
@@ -199,6 +214,15 @@ def principal():
     p.add_argument("--acp", type=float, default=ACP_CONSERVACAO)
     p.add_argument("--info-restrita", action="store_true",
                    help="aplica a majoração de 120% do art. 17, § 7º")
+    p.add_argument("--metodo-cva", choices=[mod_cva.METODO_ALTERNATIVO,
+                                            mod_cva.METODO_COMPLETO],
+                   default=mod_cva.METODO_ALTERNATIVO,
+                   help="abordagem do RWACVA: alternativa (art. 2º, § 2º) ou "
+                        "completa (art. 2º, caput)")
+    p.add_argument("--metodo-ccr", choices=[mod_cva.CCR_SACCR, mod_cva.CCR_CEM],
+                   default=mod_cva.CCR_SACCR,
+                   help="apuração da exposição do derivativo: SA-CCR (Anexo I) "
+                        "ou CEM (Anexo II) da Res. BCB 229/2022")
     p.set_defaults(func=comando_analisar)
 
     args = parser.parse_args()

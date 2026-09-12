@@ -528,7 +528,11 @@ DESCRICAO_CAMPOS = {
                           "subordinada)",
     "regiao_origem": "Região de origem dos ativos subjacentes da securitização",
     "modalidade_lastro": "Modalidade do lastro da securitização",
-    "valor_nocional": "Valor nocional do derivativo",
+    "valor_nocional": "Valor nocional (valor de referência) do derivativo",
+    "prazo_derivativo": "Prazo efetivo de vencimento do derivativo, em anos "
+                        "(M0 do art. 2º, inciso II, da Resolução BCB nº 291/2023)",
+    "liquidacao_ccp": "Indicação de liquidação em câmara com interposição de "
+                      "contraparte central",
     "valor_reposicao": "Valor de reposição (marcação a mercado) do derivativo",
     "conjunto_compensacao": "Conjunto de compensação aplicável (netting set)",
     "contraparte_derivativo": "Identificação e FPR da contraparte do derivativo",

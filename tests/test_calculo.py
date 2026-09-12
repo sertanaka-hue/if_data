@@ -4,6 +4,7 @@
 Execução:  python3 -m unittest discover -s tests -v
 """
 
+import math
 import os
 import shutil
 import sys
@@ -148,7 +149,7 @@ class TesteLookthrough(BaseDemo):
     def test_abre_todos_os_fundos_com_carteira_publicada(self):
         resultado, _ = self.montar()
         self.assertEqual(len(resultado.fundos_visitados), 3)
-        self.assertEqual(len(resultado.folhas), 16)
+        self.assertEqual(len(resultado.folhas), 17)
 
     def test_exposicao_total_respeita_a_participacao_do_art_16(self):
         """Posição de R$ 100 mi em fundo com PL de R$ 1 bi expõe 10% da carteira."""
@@ -252,10 +253,256 @@ class TesteRelatorio(BaseDemo):
         _, relatorio = self.montar()
         raiz = ET.fromstring(exportar_xml(relatorio, CENARIO_NEGOCIACAO))
         self.assertEqual(raiz.tag, "RiskData")
-        self.assertEqual(len(raiz.findall("Ativos/Ativo")), 16)
+        self.assertEqual(len(raiz.findall("Ativos/Ativo")), 17)
         self.assertAlmostEqual(
             float(raiz.find("Totais/RwaTotal").text), TesteRwa.RWA_NEGOCIACAO, places=2)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---------------------------------------------------------------------------
+# Parcela RWACVA — Resolução BCB nº 291/2023
+# ---------------------------------------------------------------------------
+
+class TesteCva(unittest.TestCase):
+    """Fórmulas do art. 2º conferidas contra cálculo manual."""
+
+    def derivativo(self, contraparte="BANCO X", nocional=100.0, reposicao=85.0,
+                   prazo=None, **kwargs):
+        from riskdata.cva import Derivativo
+        return Derivativo(descricao=f"SWAP {contraparte}", tipo="swap",
+                          contraparte=contraparte, nocional=nocional,
+                          valor_reposicao=reposicao, prazo_anos=prazo, **kwargs)
+
+    def test_fator_de_desconto(self):
+        """d = (1 − e^(−0,05 M)) / 0,05, art. 2º, inciso II."""
+        from riskdata.cva import fator_desconto
+        self.assertAlmostEqual(fator_desconto(1.0), 0.97541151, places=8)
+        self.assertAlmostEqual(fator_desconto(5.0), 4.42398434, places=7)
+        self.assertEqual(fator_desconto(0.0), 0.0)
+
+    def test_prazo_medio_ponderado_por_valor_de_referencia(self):
+        """M_i = Σ(M0 × R0) / Σ R0, art. 2º, inciso II, alínea 'a'."""
+        from riskdata.cva import prazo_medio_ponderado
+        self.assertAlmostEqual(
+            prazo_medio_ponderado([(1.0, 100.0), (5.0, 300.0)]), 4.0, places=9)
+        self.assertIsNone(prazo_medio_ponderado([]))
+
+    def test_exposicao_pelo_cem_usa_fator_de_15_por_cento(self):
+        """Art. 17, §§ 5º e 6º da Res. BCB 229/2022 sobre nocional."""
+        from riskdata.cva import CCR_CEM, exposicao_ccr
+        exp, _, _ = exposicao_ccr(self.derivativo(nocional=100.0, reposicao=0.0),
+                                  CCR_CEM)
+        self.assertAlmostEqual(exp, 15.0, places=9)
+
+    def test_exposicao_pelo_sa_ccr_aplica_alfa_de_1_4(self):
+        from riskdata.cva import CCR_SACCR, exposicao_ccr
+        exp, _, _ = exposicao_ccr(self.derivativo(nocional=100.0, reposicao=0.0),
+                                  CCR_SACCR)
+        self.assertAlmostEqual(exp, 21.0, places=9)
+
+    def test_abordagem_alternativa_uma_contraparte(self):
+        """RWA = 0,1 × 12,5 × raiz(0,25 EXP² + 0,75 EXP²) = 1,25 × EXP."""
+        from riskdata.cva import CCR_CEM, METODO_ALTERNATIVO, calcular
+        r = calcular([self.derivativo(nocional=100.0, reposicao=85.0)],
+                     metodo=METODO_ALTERNATIVO, metodo_ccr=CCR_CEM)
+        self.assertAlmostEqual(r.exposicao_total, 100.0, places=9)
+        self.assertAlmostEqual(r.rwa, 125.0, places=6)
+
+    def test_abordagem_alternativa_duas_contrapartes(self):
+        from riskdata.cva import CCR_CEM, METODO_ALTERNATIVO, calcular
+        r = calcular([self.derivativo("BANCO X"), self.derivativo("BANCO Y")],
+                     metodo=METODO_ALTERNATIVO, metodo_ccr=CCR_CEM)
+        esperado = 0.1 * 12.5 * math.sqrt(0.25 * 200.0 ** 2 + 0.75 * (100.0 ** 2 * 2))
+        self.assertAlmostEqual(r.rwa, esperado, places=6)
+
+    def test_abordagem_completa_com_prazo(self):
+        """RWA = 2,33 × 0,01 × 12,5 × raiz(...), art. 2º, caput."""
+        from riskdata.cva import (CCR_CEM, METODO_COMPLETO, calcular,
+                                  fator_desconto)
+        r = calcular([self.derivativo(prazo=1.0)], metodo=METODO_COMPLETO,
+                     metodo_ccr=CCR_CEM)
+        d = fator_desconto(1.0)
+        esperado = 2.33 * 0.01 * 12.5 * math.sqrt(
+            (0.5 * d * 100.0) ** 2 + 0.75 * (d * 100.0) ** 2)
+        self.assertAlmostEqual(r.rwa, esperado, places=6)
+        self.assertAlmostEqual(r.contrapartes[0].prazo_medio, 1.0, places=9)
+
+    def test_hedge_de_credito_reduz_a_parcela(self):
+        """Art. 2º, incisos IV e V: d_i^h × B_i^h abate o termo da contraparte."""
+        from riskdata.cva import (CCR_CEM, METODO_COMPLETO, HedgeCredito,
+                                  calcular)
+        sem = calcular([self.derivativo(prazo=1.0)], metodo=METODO_COMPLETO,
+                       metodo_ccr=CCR_CEM)
+        com = calcular([self.derivativo(prazo=1.0)],
+                       hedges=[HedgeCredito(contraparte="BANCO X",
+                                            valor_referencia=50.0, prazo_anos=1.0)],
+                       metodo=METODO_COMPLETO, metodo_ccr=CCR_CEM)
+        self.assertLess(com.rwa, sem.rwa)
+        self.assertAlmostEqual(com.rwa, sem.rwa / 2.0, places=6)
+
+    def test_abordagem_alternativa_ignora_hedge(self):
+        """O art. 2º, § 2º não reconhece hedge."""
+        from riskdata.cva import (CCR_CEM, METODO_ALTERNATIVO, HedgeCredito,
+                                  calcular)
+        hedge = [HedgeCredito(contraparte="BANCO X", valor_referencia=50.0,
+                              prazo_anos=1.0)]
+        sem = calcular([self.derivativo()], metodo=METODO_ALTERNATIVO,
+                       metodo_ccr=CCR_CEM)
+        com = calcular([self.derivativo()], hedges=hedge,
+                       metodo=METODO_ALTERNATIVO, metodo_ccr=CCR_CEM)
+        self.assertAlmostEqual(sem.rwa, com.rwa, places=9)
+
+    def test_exclusao_de_operacao_com_contraparte_central(self):
+        """Art. 2º, § 1º, inciso I."""
+        from riskdata.cva import CCR_CEM, METODO_ALTERNATIVO, Derivativo, calcular
+        r = calcular([Derivativo(descricao="MERCADO FUTURO DI", tipo="Mercado Futuro",
+                                 contraparte="B3 S.A.", nocional=1000.0,
+                                 valor_reposicao=10.0)],
+                     metodo=METODO_ALTERNATIVO, metodo_ccr=CCR_CEM)
+        self.assertEqual(r.rwa, 0.0)
+        self.assertEqual(len(r.excluidos), 1)
+        self.assertEqual(r.excluidos[0]["artigo"], "Art. 2º, § 1º, inciso I")
+
+    def test_exclusao_de_contraparte_soberana(self):
+        """Art. 2º, § 1º, inciso II."""
+        from riskdata.cva import CCR_CEM, METODO_ALTERNATIVO, calcular
+        r = calcular([self.derivativo("TESOURO NACIONAL", contraparte_isenta=True)],
+                     metodo=METODO_ALTERNATIVO, metodo_ccr=CCR_CEM)
+        self.assertEqual(r.rwa, 0.0)
+        self.assertEqual(r.excluidos[0]["artigo"], "Art. 2º, § 1º, inciso II")
+
+    def test_exclusao_de_swap_de_credito_receptor_de_risco(self):
+        """Art. 2º, § 1º, inciso III."""
+        from riskdata.cva import CCR_CEM, METODO_ALTERNATIVO, calcular
+        r = calcular([self.derivativo("BANCO X", receptor_risco_credito=True)],
+                     metodo=METODO_ALTERNATIVO, metodo_ccr=CCR_CEM)
+        self.assertEqual(r.excluidos[0]["artigo"], "Art. 2º, § 1º, inciso III")
+
+    def test_derivativo_sem_nocional_fica_pendente(self):
+        from riskdata.cva import METODO_ALTERNATIVO, Derivativo, calcular
+        r = calcular([Derivativo(descricao="SWAP SEM DADOS", tipo="swap",
+                                 contraparte="BANCO W", valor_mercado=500.0)],
+                     metodo=METODO_ALTERNATIVO)
+        self.assertFalse(r.calculavel)
+        self.assertEqual(len(r.nao_apurados), 1)
+        self.assertIn("valor_nocional", r.nao_apurados[0]["faltantes"])
+
+
+class TesteCvaNoRelatorio(BaseDemo):
+    """Integração da parcela RWACVA ao relatório e às exportações."""
+
+    def montar_enriquecido(self, **kwargs):
+        from riskdata.enriquecimento import TabelaEnriquecimento
+        caminho = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "samples", "enriquecimento_exemplo.csv")
+        tabela = TabelaEnriquecimento.carregar(caminho)
+        motor = MotorLookthrough(self.repo, enriquecimento=tabela)
+        resultado = motor.resolver("11111111000191", COMPETENCIA_DEMO,
+                                   valor_posicao=100_000_000.0)
+        return resultado, montar_relatorio(
+            resultado, COMPETENCIA_DEMO, "2026-08-31",
+            valor_posicao=100_000_000.0, **kwargs)
+
+    def test_sem_enriquecimento_o_swap_fica_pendente(self):
+        _, relatorio = self.montar()
+        cva = relatorio["cva"]
+        self.assertEqual(cva["qtd_considerados"], 0)
+        self.assertEqual(len(cva["nao_apurados"]), 1)
+        self.assertEqual(cva["rwa"], 0.0)
+
+    def test_com_enriquecimento_a_parcela_e_apurada(self):
+        """Nocional 250 mi a 10% de participação, reposição 12 mi, SA-CCR."""
+        _, relatorio = self.montar_enriquecido()
+        cva = relatorio["cva"]
+        self.assertEqual(cva["qtd_considerados"], 1)
+        # EXP = 1,4 × (1,2 mi + 0,15 × 25 mi) = 6,93 mi
+        self.assertAlmostEqual(cva["exposicao_total"], 6_930_000.0, places=2)
+        # RWA = 1,25 × EXP para uma única contraparte
+        self.assertAlmostEqual(cva["rwa"], 8_662_500.0, places=2)
+
+    def test_futuro_de_bolsa_e_excluido_da_parcela(self):
+        _, relatorio = self.montar_enriquecido()
+        excluidos = relatorio["cva"]["excluidos"]
+        self.assertEqual(len(excluidos), 1)
+        self.assertIn("FUTURO", excluidos[0]["descricao"].upper())
+
+    def test_cva_entra_nos_dois_cenarios(self):
+        """Art. 3º da Res. BCB 291/2023: carteira bancária e de negociação."""
+        _, relatorio = self.montar_enriquecido()
+        cva_rwa = relatorio["cva"]["rwa"]
+        self.assertGreater(cva_rwa, 0)
+        for cenario in (CENARIO_BANCARIA, CENARIO_NEGOCIACAO):
+            resumo = relatorio["cenarios"][cenario]["resumo"]
+            self.assertAlmostEqual(resumo["rwa_cva"], cva_rwa, places=2)
+            self.assertAlmostEqual(resumo["rwa_com_cva"],
+                                   resumo["rwa_total"] + cva_rwa, places=2)
+            self.assertAlmostEqual(resumo["capital_com_cva"],
+                                   resumo["rwa_com_cva"] * 0.08, places=2)
+
+    def test_enriquecimento_reduz_o_fpr_das_debentures(self):
+        """Porte grande e baixo risco leva a debênture de 100% (art. 41) a 65% (art. 35)."""
+        _, relatorio = self.montar_enriquecido()
+        linhas = relatorio["cenarios"][CENARIO_BANCARIA]["linhas"]
+        debentures = [l for l in linhas if "DEBENTURE" in l["ativo"].upper()]
+        self.assertTrue(debentures)
+        for linha in debentures:
+            self.assertAlmostEqual(linha["fator"], 0.65, places=6)
+            self.assertEqual(linha["artigo"], "Art. 35")
+
+    def test_csv_traz_a_secao_do_cva(self):
+        _, relatorio = self.montar_enriquecido()
+        texto = exportar_csv(relatorio, CENARIO_BANCARIA)
+        self.assertIn("PARCELA RWA CVA", texto)
+        self.assertIn("Resolução BCB nº 291/2023", texto)
+        self.assertIn("Derivativos excluídos", texto)
+
+    def test_xml_traz_o_bloco_do_cva(self):
+        from xml.etree import ElementTree as ET
+        _, relatorio = self.montar_enriquecido()
+        raiz = ET.fromstring(exportar_xml(relatorio, CENARIO_NEGOCIACAO))
+        bloco = raiz.find("RwaCva")
+        self.assertIsNotNone(bloco)
+        self.assertIn("291", bloco.get("baseLegal"))
+        self.assertEqual(len(raiz.findall("RwaCva/Contraparte")), 1)
+        self.assertIsNotNone(raiz.find("Totais/RwaTotalComCva"))
+
+
+class TesteEnriquecimento(unittest.TestCase):
+    """Leitura da planilha de atributos ausentes na CDA."""
+
+    def carregar(self, conteudo):
+        from riskdata.enriquecimento import TabelaEnriquecimento
+        caminho = tempfile.mktemp(suffix=".csv")
+        with open(caminho, "w", encoding="utf-8") as fh:
+            fh.write(conteudo)
+        try:
+            return TabelaEnriquecimento.carregar(caminho)
+        finally:
+            os.unlink(caminho)
+
+    def test_converte_numeros_com_virgula_decimal(self):
+        tabela = self.carregar("codigo;valor_nocional;prazo_derivativo\nABC;1.500.000,50;2,5\n")
+        registro = tabela.por_codigo["abc"]
+        self.assertAlmostEqual(registro["valor_nocional"], 1_500_000.50, places=2)
+        self.assertAlmostEqual(registro["prazo_derivativo"], 2.5, places=6)
+
+    def test_converte_booleanos_em_portugues(self):
+        tabela = self.carregar("codigo;listada_em_bolsa;liquidacao_ccp\nABC;sim;nao\n")
+        registro = tabela.por_codigo["abc"]
+        self.assertIs(registro["listada_em_bolsa"], True)
+        self.assertIs(registro["liquidacao_ccp"], False)
+
+    def test_nao_sobrescreve_atributo_ja_existente(self):
+        tabela = self.carregar("codigo;porte_emissor\nABC;grande\n")
+        ativo = Ativo(codigo="ABC", atributos={"porte_emissor": "pequeno"})
+        tabela.aplicar(ativo)
+        self.assertEqual(ativo.atributos["porte_emissor"], "pequeno")
+
+    def test_tabela_ausente_nao_quebra(self):
+        from riskdata.enriquecimento import TabelaEnriquecimento
+        tabela = TabelaEnriquecimento.carregar("/caminho/que/nao/existe.csv")
+        self.assertTrue(tabela.vazia)
+        self.assertEqual(tabela.aplicar(Ativo(codigo="X")), 0)

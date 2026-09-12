@@ -114,10 +114,12 @@ class ResultadoLookthrough:
 class MotorLookthrough:
     """Percorre a cadeia de fundos usando o repositório da CVM."""
 
-    def __init__(self, repositorio, anbima=None, log=None):
+    def __init__(self, repositorio, anbima=None, log=None, enriquecimento=None):
         self.repo = repositorio
         self.anbima = anbima
         self.log = log or (lambda m: None)
+        #: tabela opcional com atributos de contraparte ausentes na CDA
+        self.enriquecimento = enriquecimento
 
     # -- API pública -------------------------------------------------------
 
@@ -192,6 +194,9 @@ class MotorLookthrough:
                 self.log(f"ANBIMA indisponível para {cnpj}: {exc}")
 
         ativos = self.repo.obter_carteira(cnpj, competencia)
+        if self.enriquecimento is not None and not self.enriquecimento.vazia:
+            for ativo in ativos:
+                self.enriquecimento.aplicar(ativo)
         total = sum(a.valor for a in ativos)
         no = NoFundo(
             cnpj=cnpj,

@@ -68,9 +68,14 @@ CARTEIRAS = [
     ("22222222000172", "BLC_2", "Cotas de Fundos", "Cotas de FIDC", "", "",
      "", "", 90_000_000.00, 90_000.0, "44444444000134",
      "RISK DATA DEMO FIDC MULTISETORIAL SENIOR"),
+    # Swap de balcão: entra na parcela RWACVA (Res. BCB 291/2023).
     ("22222222000172", "BLC_3", "Swap", "Swap", "SWAP-DI-PRE",
-     "DIFERENCIAL DE SWAP A RECEBER DI X PRE", "B3 S.A.", "",
-     5_000_000.00, 0.0, "", ""),
+     "DIFERENCIAL DE SWAP A RECEBER DI X PRE", "BANCO SANTANDER BRASIL S.A.",
+     "90400888000142", 3_000_000.00, 0.0, "", ""),
+    # Futuro de bolsa: excluído do RWACVA pelo art. 2º, § 1º, inciso I.
+    ("22222222000172", "BLC_3", "Mercado Futuro", "Futuro", "DI1F28",
+     "MERCADO FUTURO DI POSICOES COMPRADAS", "B3 S.A.", "",
+     2_000_000.00, 0.0, "", ""),
     ("22222222000172", "BLC_8", "Disponibilidades", "Conta corrente", "",
      "SALDO EM CONTA CORRENTE", "", "", 10_000_000.00, 0.0, "", ""),
 

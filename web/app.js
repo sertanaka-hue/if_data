@@ -105,6 +105,12 @@
       $("seloAnbimaTexto").textContent = s.anbima.configurado
         ? "ANBIMA conectada" : "ANBIMA sem credenciais";
 
+      const enr = s.enriquecimento || {};
+      $("seloEnriquecimento").className = "selo " + (enr.ativa ? "ativo" : "");
+      $("seloEnriquecimentoTexto").textContent = enr.ativa
+        ? "Enriquecimento: " + enr.linhas + " linha(s)"
+        : "Sem planilha de enriquecimento";
+
       $("resumoBase").innerHTML = temDados
         ? alerta("", "ok", "Base disponível. ",
             "Competências carregadas: " + (s.competencias_carregadas.join(", ") || "—") +
@@ -241,6 +247,8 @@
         profundidade: $("profundidade").value,
         info_publica: $("infoPublica").checked,
         acp: Number($("acp").value),
+        metodo_cva: $("metodoCva").value,
+        metodo_ccr: $("metodoCcr").value,
       };
       const relatorio = await api("/api/analisar", {
         method: "POST",
@@ -296,6 +304,13 @@
         complemento: "RWA ÷ exposição", classe: "" },
       { rotulo: "Capital requerido", valor: moedaCurta(resumo.capital_minimo),
         complemento: "F = " + pct(cab.fator_f, 1), classe: "destaque" },
+      { rotulo: "RWA CVA", valor: moedaCurta(resumo.rwa_cva),
+        complemento: (r.cva && r.cva.calculavel) ? "Res. BCB no 291/2023"
+          : "nao apuravel - faltam parametros",
+        classe: (r.cva && !r.cva.calculavel) ? "aviso" : "" },
+      { rotulo: "RWA com CVA", valor: moedaCurta(resumo.rwa_com_cva),
+        complemento: "capital " + moedaCurta(resumo.capital_com_cva),
+        classe: "destaque" },
       { rotulo: "Capital com ACP", valor: moedaCurta(resumo.capital_com_acp),
         complemento: "inclui ACP de " + pct(cab.acp_conservacao, 1), classe: "" },
       { rotulo: "Ativos finais", valor: String(cab.qtd_ativos_finais),
@@ -311,22 +326,26 @@
     let avisos = "";
     if (estado.cenario === "negociacao") {
       avisos += alerta("", "info", "Escopo do cenário 1. ",
-        "O total apresentado é a parcela RWA DRC (Resolução BCB nº 313/2023), que cobre o " +
-        "risco de crédito dos instrumentos da carteira de negociação. O risco de mercado " +
-        "dessas posições corre pela parcela RWA MPAD e a variação do valor dos derivativos " +
-        "pela RWA CVA (Resolução BCB nº 291/2023) — nenhuma das duas está somada aqui. " +
-        "Na carteira de negociação, a RWA CPAD alcança apenas o risco de crédito de " +
-        "contraparte (Resolução BCB nº 229/2022, art. 3º, II).");
+        "O RWA total é a parcela RWA DRC (Resolução BCB nº 313/2023), que cobre o risco " +
+        "de crédito dos instrumentos da carteira de negociação. A parcela RWA CVA " +
+        "(Resolução BCB nº 291/2023) é apurada à parte e aparece no indicador “RWA com " +
+        "CVA” e na seção própria. O risco de mercado dessas posições corre pela parcela " +
+        "RWA MPAD, que não é calculada aqui. Na carteira de negociação, a RWA CPAD " +
+        "alcança apenas o risco de crédito de contraparte (Resolução BCB nº 229/2022, " +
+        "art. 3º, II).");
     } else {
       avisos += alerta("", "info", "Escopo do cenário 2. ",
-        "O total é a parcela RWA CPAD (Resolução BCB nº 229/2022), apurada como o somatório " +
-        "das exposições ponderadas pelos respectivos FPR (art. 2º), com a carteira aberta " +
-        "por transparência na forma dos arts. 16 a 18 e o tratamento do art. 59 para as cotas.");
+        "O RWA total é a parcela RWA CPAD (Resolução BCB nº 229/2022), apurada como o " +
+        "somatório das exposições ponderadas pelos respectivos FPR (art. 2º), com a " +
+        "carteira aberta por transparência na forma dos arts. 16 a 18 e o tratamento do " +
+        "art. 59 para as cotas. A parcela RWA CVA também incide sobre a carteira bancária " +
+        "(Resolução BCB nº 291/2023, art. 3º) e aparece no indicador “RWA com CVA”.");
     }
     (resumo.observacoes || []).forEach((o) => { avisos += alerta("", "alerta", "Teto do art. 59, § 3º. ", o); });
     (r.avisos || []).forEach((a) => { avisos += alerta("", "alerta", "Atenção. ", a); });
     $("avisosCenario").innerHTML = avisos;
 
+    desenharCva(r);
     desenharPendencias(r);
     desenharAlocacao(resumo);
     desenharArvore(r);
@@ -334,6 +353,98 @@
 
     document.querySelectorAll(".aba").forEach((b) =>
       b.classList.toggle("ativa", b.dataset.cenario === estado.cenario));
+  }
+
+  function desenharCva(r) {
+    const c = r.cva;
+    if (!c) { $("cartaoCva").classList.add("oculto"); return; }
+    $("cartaoCva").classList.remove("oculto");
+
+    if (!c.qtd_derivativos) {
+      $("corpoCva").innerHTML = alerta("", "ok",
+        "Nenhum derivativo na carteira aberta. ",
+        "A parcela RWA CVA \u00e9 zero: n\u00e3o h\u00e1 instrumento financeiro derivativo " +
+        "sujeito ao risco de varia\u00e7\u00e3o do valor pela qualidade credit\u00edcia da contraparte.");
+      return;
+    }
+
+    const abordagem = c.metodo === "completa"
+      ? "Completa (art. 2\u00ba, caput), com reconhecimento de hedge de cr\u00e9dito"
+      : "Alternativa (art. 2\u00ba, \u00a7 2\u00ba), sem reconhecimento de hedge";
+    const formula = c.metodo === "completa"
+      ? "RWA CVA = 2,33 \u00d7 0,01 \u00d7 (1/F) \u00d7 \u221a[ (\u03a3\u1d62 0,5 \u00d7 (d\u1d62\u00b7EXP\u1d62 \u2212 \u03a3\u2095 d\u1d62\u02b0\u00b7B\u1d62\u02b0) \u2212 \u03a3 d\u1d62\u2099d\u00b7B\u1d62\u2099d)\u00b2 + \u03a3\u1d62 0,75 \u00d7 (d\u1d62\u00b7EXP\u1d62 \u2212 \u03a3\u2095 d\u1d62\u02b0\u00b7B\u1d62\u02b0)\u00b2 ]"
+      : "RWA CVA = 0,1 \u00d7 (1/F) \u00d7 \u221a[ 0,25 \u00d7 (\u03a3\u1d62 EXP\u1d62)\u00b2 + 0,75 \u00d7 \u03a3\u1d62 EXP\u1d62\u00b2 ]";
+
+    let html = '<div class="grade-resumo" style="margin-bottom:16px">' +
+      '<div class="indicador destaque"><div class="rotulo">RWA CVA</div>' +
+      '<div class="valor">' + esc(moedaCurta(c.rwa)) + '</div>' +
+      '<div class="complemento">' + esc(moeda(c.rwa)) + '</div></div>' +
+      '<div class="indicador"><div class="rotulo">Capital CVA</div>' +
+      '<div class="valor">' + esc(moedaCurta(c.capital)) + '</div>' +
+      '<div class="complemento">F = 8%</div></div>' +
+      '<div class="indicador"><div class="rotulo">Exposi\u00e7\u00e3o total</div>' +
+      '<div class="valor">' + esc(moedaCurta(c.exposicao_total)) + '</div>' +
+      '<div class="complemento">' + esc(c.metodo_ccr === "cem" ? "CEM \u2014 Anexo II" : "SA-CCR \u2014 Anexo I") + '</div></div>' +
+      '<div class="indicador ' + (c.nao_apurados.length ? "aviso" : "") + '">' +
+      '<div class="rotulo">Derivativos</div>' +
+      '<div class="valor">' + c.qtd_considerados + '/' + c.qtd_derivativos + '</div>' +
+      '<div class="complemento">' + c.excluidos.length + ' exclu\u00eddo(s), ' +
+      c.nao_apurados.length + ' sem par\u00e2metros</div></div></div>';
+
+    html += alerta("", "info", abordagem + ". ", formula);
+    (c.avisos || []).forEach(function (a) { html += alerta("", "alerta", "Aten\u00e7\u00e3o. ", a); });
+
+    if (c.contrapartes.length) {
+      html += '<h3 style="font-size:13px;margin:16px 0 8px">Exposi\u00e7\u00e3o por contraparte</h3>' +
+        '<div class="envolve-tabela"><table><thead><tr>' +
+        '<th>Contraparte</th><th class="direita">Opera\u00e7\u00f5es</th>' +
+        '<th class="direita">Exposi\u00e7\u00e3o</th><th class="direita">Prazo m\u00e9dio</th>' +
+        '<th class="direita">Fator de desconto</th><th class="direita">Hedge</th>' +
+        '<th class="direita">Termo agregado</th><th>Situa\u00e7\u00e3o</th></tr></thead><tbody>' +
+        c.contrapartes.map(function (cp) {
+          return '<tr class="' + (cp.faltantes.length ? "linha-pendente" : "") + '">' +
+            '<td>' + esc(cp.contraparte) + '</td>' +
+            '<td class="direita">' + cp.qtd_operacoes + '</td>' +
+            '<td class="direita">' + moeda(cp.exposicao) + '</td>' +
+            '<td class="direita">' + (cp.prazo_medio === null ? "\u2014" : Number(cp.prazo_medio).toFixed(2)) + '</td>' +
+            '<td class="direita">' + (cp.fator_desconto === null ? "\u2014" : Number(cp.fator_desconto).toFixed(4)) + '</td>' +
+            '<td class="direita">' + moeda(cp.hedge_reconhecido) + '</td>' +
+            '<td class="direita">' + moeda(cp.termo) + '</td>' +
+            '<td>' + ((cp.faltantes_descritos || []).map(function (f) {
+              return '<span class="pendencia-chip">' + esc(f) + '</span>'; }).join("") ||
+              '<span class="etiqueta fpr-baixo">apurada</span>') + '</td></tr>';
+        }).join("") + '</tbody></table></div>';
+    }
+
+    if (c.excluidos.length) {
+      html += '<h3 style="font-size:13px;margin:16px 0 8px">Derivativos exclu\u00eddos da parcela (art. 2\u00ba, \u00a7 1\u00ba)</h3>' +
+        '<div class="envolve-tabela"><table><thead><tr><th>Derivativo</th><th>Fundo</th>' +
+        '<th class="direita">Valor</th><th>Base legal</th><th>Motivo</th></tr></thead><tbody>' +
+        c.excluidos.map(function (e) {
+          return '<tr><td>' + esc(e.descricao) + '</td><td>' + esc(e.fundo) + '</td>' +
+            '<td class="direita">' + moeda(e.valor_mercado) + '</td>' +
+            '<td><span class="artigo">' + esc(e.artigo) + '</span>' +
+            '<span class="base-legal">' + esc(e.resolucao) + '</span></td>' +
+            '<td>' + esc(e.motivo) + '</td></tr>';
+        }).join("") + '</tbody></table></div>';
+    }
+
+    if (c.nao_apurados.length) {
+      html += '<h3 style="font-size:13px;margin:16px 0 8px">Derivativos sem par\u00e2metros para o c\u00e1lculo</h3>' +
+        '<div class="envolve-tabela"><table><thead><tr><th>Derivativo</th><th>Fundo</th>' +
+        '<th>Contraparte</th><th class="direita">Valor na CDA</th>' +
+        '<th>Dados faltantes</th></tr></thead><tbody>' +
+        c.nao_apurados.map(function (n) {
+          return '<tr class="linha-pendente"><td>' + esc(n.descricao) + '</td>' +
+            '<td>' + esc(n.fundo) + '</td><td>' + esc(n.contraparte) + '</td>' +
+            '<td class="direita">' + moeda(n.valor_mercado) + '</td>' +
+            '<td>' + (n.faltantes_descritos || []).map(function (f) {
+              return '<span class="pendencia-chip">' + esc(f) + '</span>'; }).join("") +
+            '</td></tr>';
+        }).join("") + '</tbody></table></div>';
+    }
+
+    $("corpoCva").innerHTML = html;
   }
 
   function desenharPendencias(r) {
