@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Risk Data — Look-through de fundos e RWA</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><path d='M8 22V13m6 9V9m6 13v-6m6 6V11' stroke='white' stroke-width='2.6' stroke-linecap='round' fill='none'/></svg>">
+</head>
+<body>
+
+<header class="topo">
+  <div class="marca">
+    <div class="marca-simbolo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round">
+        <path d="M4 19V12M9.3 19V6M14.7 19v-9M20 19V8"/>
+      </svg>
+    </div>
+    <div class="marca-texto">
+      <h1>Risk Data</h1>
+      <p>Look-through de fundos &middot; FPR e RWA</p>
+    </div>
+  </div>
+  <div class="topo-espaco"></div>
+  <span class="selo" id="seloFonte"><span class="ponto"></span><span id="seloFonteTexto">Verificando fontes…</span></span>
+  <span class="selo" id="seloAnbima"><span class="ponto"></span><span id="seloAnbimaTexto">ANBIMA</span></span>
+</header>
+
+<div class="container">
+
+  <!-- ------------------------------------------------ base de dados -->
+  <section class="cartao nao-imprimir" id="cartaoBase">
+    <div class="cartao-cabecalho">
+      <h2>Base de dados</h2>
+      <span class="legenda">CVM — cadastro de fundos, composição da carteira (CDA) e informe diário</span>
+      <div class="topo-espaco"></div>
+      <button class="botao secundario" id="btnAlternarBase" type="button">Ocultar</button>
+    </div>
+    <div class="cartao-corpo" id="corpoBase">
+      <div class="grade-consulta" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));">
+        <div class="campo">
+          <label for="competenciaCarga">Competência a carregar</label>
+          <select id="competenciaCarga"></select>
+        </div>
+        <div class="campo">
+          <label>&nbsp;</label>
+          <label class="check"><input type="checkbox" id="forcarDownload"> Reprocessar arquivos já baixados</label>
+        </div>
+        <div class="campo">
+          <label>&nbsp;</label>
+          <div class="linha-botoes">
+            <button class="botao" id="btnCarregar" type="button">Carregar dados da CVM</button>
+            <button class="botao secundario" id="btnDemo" type="button">Carteira de demonstração</button>
+          </div>
+        </div>
+      </div>
+      <div id="statusCarga" class="oculto" style="margin-top:14px">
+        <div class="registro" id="registroCarga"></div>
+      </div>
+      <div id="resumoBase" style="margin-top:13px"></div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------- consulta -->
+  <section class="cartao nao-imprimir">
+    <div class="cartao-cabecalho">
+      <h2>Consulta do fundo</h2>
+      <span class="legenda">Informe o CNPJ ou parte do nome do fundo</span>
+    </div>
+    <div class="cartao-corpo">
+      <div class="grade-consulta">
+        <div class="campo">
+          <label for="busca">Fundo <span class="dica">— CNPJ ou denominação</span></label>
+          <input type="text" id="busca" placeholder="Ex.: 11.111.111/0001-91 ou Risk Data Demo" autocomplete="off">
+          <div class="sugestoes" id="sugestoes"></div>
+          <input type="hidden" id="cnpjSelecionado">
+        </div>
+        <div class="campo">
+          <label for="dataPesquisa">Data da pesquisa</label>
+          <input type="date" id="dataPesquisa">
+        </div>
+        <div class="campo">
+          <label for="valorPosicao">Valor da posição <span class="dica">— R$, opcional</span></label>
+          <input type="number" id="valorPosicao" placeholder="Carteira integral" min="0" step="1000">
+        </div>
+        <div class="campo">
+          <label for="profundidade">Níveis de abertura</label>
+          <select id="profundidade">
+            <option value="1">1 nível</option>
+            <option value="2">2 níveis</option>
+            <option value="3">3 níveis</option>
+            <option value="6" selected>6 níveis (padrão)</option>
+            <option value="10">10 níveis</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label for="acp">ACP de conservação</label>
+          <select id="acp">
+            <option value="0">Sem adicional (8,0%)</option>
+            <option value="0.025" selected>2,5% — total 10,5%</option>
+            <option value="0.035">3,5% — total 11,5%</option>
+          </select>
+        </div>
+      </div>
+      <div class="linha-botoes" style="margin-top:15px">
+        <button class="botao" id="btnAnalisar" type="button">Gerar relatório</button>
+        <label class="check" title="Art. 17, § 7º da Resolução BCB nº 229/2022">
+          <input type="checkbox" id="infoPublica" checked>
+          Informação de domínio público ou fornecida pelo administrador
+        </label>
+      </div>
+      <div id="erroConsulta" style="margin-top:13px"></div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------- relatório -->
+  <div id="relatorio" class="oculto">
+
+    <section class="cartao">
+      <div class="cartao-cabecalho">
+        <h2 id="tituloRelatorio">Resumo do relatório</h2>
+        <div class="topo-espaco"></div>
+        <div class="linha-botoes nao-imprimir">
+          <button class="botao secundario" id="btnCsv" type="button">Exportar CSV</button>
+          <button class="botao secundario" id="btnXml" type="button">Exportar XML</button>
+          <button class="botao escuro" id="btnImprimir" type="button">Imprimir / PDF</button>
+        </div>
+      </div>
+      <div class="abas nao-imprimir">
+        <button class="aba ativa" data-cenario="negociacao" type="button">Cenário 1 — Carteira de negociação</button>
+        <button class="aba" data-cenario="bancaria" type="button">Cenário 2 — Carteira bancária</button>
+      </div>
+      <div class="cartao-corpo">
+        <dl class="ficha" id="fichaFundo"></dl>
+        <div class="grade-resumo" id="indicadores"></div>
+        <div id="avisosCenario" style="margin-top:16px"></div>
+      </div>
+    </section>
+
+    <section class="cartao" id="cartaoPendencias">
+      <div class="cartao-cabecalho">
+        <h2>Dados faltantes para o cálculo</h2>
+        <span class="legenda">O que impede o enquadramento definitivo e qual tratamento foi adotado</span>
+      </div>
+      <div class="cartao-corpo" id="corpoPendencias"></div>
+    </section>
+
+    <section class="cartao">
+      <div class="cartao-cabecalho">
+        <h2>Alocação de RWA por dispositivo normativo</h2>
+        <span class="legenda">Artigo que originou o FPR / RW aplicado</span>
+      </div>
+      <div class="cartao-corpo" id="corpoAlocacao"></div>
+    </section>
+
+    <section class="cartao">
+      <div class="cartao-cabecalho">
+        <h2>Cadeia de fundos aberta</h2>
+        <span class="legenda">Arts. 16 a 18 da Resolução BCB nº 229/2022</span>
+      </div>
+      <div class="cartao-corpo" id="corpoArvore"></div>
+    </section>
+
+    <section class="cartao">
+      <div class="cartao-cabecalho">
+        <h2>Composição detalhada até o ativo final</h2>
+        <span class="legenda" id="legendaTabela"></span>
+      </div>
+      <div class="cartao-corpo">
+        <div class="filtros nao-imprimir">
+          <input type="text" id="filtroTexto" placeholder="Filtrar por ativo, emissor ou fundo…">
+          <select id="filtroArtigo"><option value="">Todos os artigos</option></select>
+          <label class="check"><input type="checkbox" id="filtroPendentes"> Apenas linhas com pendência de dados</label>
+          <div class="topo-espaco"></div>
+          <span class="legenda" id="contadorLinhas"></span>
+        </div>
+        <div class="envolve-tabela">
+          <table id="tabelaAtivos">
+            <thead><tr id="cabecalhoTabela"></tr></thead>
+            <tbody id="corpoTabela"></tbody>
+            <tfoot id="rodapeTabela"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="estadoVazio" class="cartao">
+    <div class="vazio">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M3 3v18h18M7 15l3.5-4 3 2.5L20 7"/>
+      </svg>
+      <p><strong>Nenhuma consulta realizada.</strong><br>
+      Carregue a base da CVM para a competência desejada e informe o CNPJ ou o nome do fundo.</p>
+    </div>
+  </div>
+
+  <p class="rodape">
+    <strong>Risk Data</strong> — apuração de FPR e RWA sobre a carteira aberta por transparência.<br>
+    Resolução BCB nº 229/2022 (RWA<sub>CPAD</sub>) &middot; Resolução BCB nº 313/2023 (RWA<sub>DRC</sub>) &middot;
+    Resolução BCB nº 291/2023 (RWA<sub>CVA</sub>) &middot; Resolução BCB nº 202/2022 (RWA<sub>SP</sub>) &middot;
+    Circular nº 3.809/2016.<br>
+    Fontes de dados: Portal de Dados Abertos da CVM e Feed de Dados da ANBIMA.
+  </p>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
