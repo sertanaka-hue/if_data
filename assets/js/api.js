@@ -23,10 +23,17 @@
     modo: 'auto',            // 'auto' | 'live' | 'demo'
     demoAtivo: false,
     timeoutMs: 45000,
+    assinaturaCadastro: null,      // índice da assinatura do cadastro que funcionou
+    cadastroIndisponivel: false,   // desistência registrada, para não insistir
+    erroCadastro: null,
     ultimoDiagnostico: null
   };
 
   var memCache = new Map();
+  /* Promessas em voo. Sem isto, duas telas que carregam ao mesmo tempo sondam o
+     cadastro em paralelo — nenhuma vê a desistência da outra e o número de
+     requisições dobra a cada tela aberta. */
+  var pendentes = new Map();
   var listeners = [];
 
   function on(fn) { listeners.push(fn); }
@@ -60,6 +67,10 @@
   }
   function limparCache() {
     memCache.clear();
+    pendentes.clear();
+    state.cadastroIndisponivel = false;
+    state.erroCadastro = null;
+    state.assinaturaCadastro = null;
     podarCache(); podarCache();
     emit({ tipo: 'cache-limpo' });
   }
@@ -70,7 +81,7 @@
     return url + (url.indexOf('?') >= 0 ? '&' : '?') + '$format=json';
   }
 
-  function getJSON(url, tentativa, timeoutMs) {
+  function getJSON(url, tentativa, timeoutMs, semRetentativa) {
     var t = tentativa || 0;
     var limite = timeoutMs || state.timeoutMs;
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -98,12 +109,13 @@
         // 5xx e timeouts merecem várias tentativas. Um 4xx é recusa do
         // servidor ao próprio pedido: repetir só gasta tempo. Falha de rede ou
         // CORS raramente melhora, mas ganha uma segunda chance curta.
-        var maxTentativas = (e.status >= 500 || e.name === 'AbortError') ? 3
+        var maxTentativas = semRetentativa ? 0
+                          : (e.status >= 500 || e.name === 'AbortError') ? 3
                           : (e.status >= 400 && e.status < 500) ? 0 : 1;
         if (t < maxTentativas) {
           var espera = Math.pow(2, t) * 700;
           return new Promise(function (res) { setTimeout(res, espera); })
-            .then(function () { return getJSON(url, t + 1, timeoutMs); });
+            .then(function () { return getJSON(url, t + 1, timeoutMs, semRetentativa); });
         }
         e.url = url;
         throw e;
@@ -387,39 +399,60 @@
   function cadastro(anoMes, tipo) {
     var chave = 'cad.' + anoMes + '.' + tipo;
     if (memCache.has(chave)) return Promise.resolve(memCache.get(chave));
+    if (pendentes.has(chave)) return pendentes.get(chave);
     if (state.demoAtivo) {
       var d = global.DEMO.cadastro(anoMes, tipo);
       memCache.set(chave, d);
       return Promise.resolve(d);
     }
 
-    var candidatos = candidatosCadastro(anoMes, tipo);
-    // assinatura já descoberta nesta sessão: vai direto nela
-    if (U.isNum(state.assinaturaCadastro)) {
-      candidatos = [candidatos[state.assinaturaCadastro]].concat(candidatos);
+    /* Desistir é parte do contrato. Quando nenhuma assinatura respondeu, repetir
+       a sondagem a cada período transforma uma série de doze trimestres em
+       centenas de requisições — e um serviço que já estava recusando passa a
+       devolver 500 por excesso. Uma vez que não deu, não insiste até que o
+       usuário peça "Atualizar" (que limpa o cache e estas marcas). */
+    if (state.cadastroIndisponivel) {
+      return Promise.reject(new Error('IfDataCadastro indisponível nesta sessão' +
+        (state.erroCadastro ? ': ' + state.erroCadastro : '')));
     }
+
+    var todos = candidatosCadastro(anoMes, tipo);
+    // assinatura já descoberta: vai direto nela, sem sondar de novo
+    var candidatos = U.isNum(state.assinaturaCadastro)
+      ? [todos[state.assinaturaCadastro]]
+      : todos;
 
     function tentar(i, ultimoErro) {
       if (i >= candidatos.length) {
-        state.cadastroIndisponivel = true;
+        if (!U.isNum(state.assinaturaCadastro)) {
+          state.cadastroIndisponivel = true;
+          state.erroCadastro = (ultimoErro && ultimoErro.message) || 'nenhuma assinatura respondeu';
+        }
         throw (ultimoErro || new Error('nenhuma assinatura do IfDataCadastro respondeu'));
       }
       var c = candidatos[i];
-      // primeiro com paginação; se o serviço recusar $top/$skip, sem eles
-      return lerCadastro(c.url)
-        .then(function (v) {
+      /* Um pedido só por assinatura, sem paginação e sem retentativa: a
+         paginação é justamente o que vários recursos do Olinda recusam, e
+         repetir um 500 durante a sondagem só multiplica a carga. */
+      var url = c.url + (c.url.indexOf('?') >= 0 ? '&' : '?') + '$format=json';
+      return getJSON(url, 0, 25000, true)
+        .then(function (json) {
+          var v = (json && json.value) || [];
           if (!v.length) throw new Error('resposta vazia');
           memCache.set(chave, v);
           state.urlCadastroUsada = c.url;
-          state.assinaturaCadastro = candidatosCadastro(anoMes, tipo)
-            .findIndex(function (x) { return x.rotulo === c.rotulo; });
+          state.assinaturaCadastro = todos.findIndex(function (x) { return x.rotulo === c.rotulo; });
           state.cadastroIndisponivel = false;
+          state.erroCadastro = null;
           return v;
         })
         .catch(function (e) { return tentar(i + 1, e); });
     }
 
-    return Promise.resolve().then(function () { return tentar(0, null); });
+    var promessa = Promise.resolve().then(function () { return tentar(0, null); });
+    pendentes.set(chave, promessa);
+    promessa.catch(function () {}).then(function () { pendentes.delete(chave); });
+    return promessa;
   }
 
   /**
@@ -630,7 +663,11 @@
       state.demoAtivo = opts.modo === 'demo';
     }
     if (opts.timeoutMs) state.timeoutMs = opts.timeoutMs;
+    state.cadastroIndisponivel = false;
+    state.erroCadastro = null;
+    state.assinaturaCadastro = null;
     memCache.clear();
+    pendentes.clear();
     emit({ tipo: 'config', state: state });
   }
 

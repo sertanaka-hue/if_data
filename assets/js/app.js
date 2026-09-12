@@ -131,7 +131,7 @@
         ST.set({ anualizar: v }); ST.salvarPrefs(); recarregar();
       }, 'A DRE do IF.data é acumulada no ano: marque para converter o resultado em base anual (×12/mês).'),
       U.el('button', { class: 'btn', text: 'Atualizar', title: 'Refaz a consulta ignorando o cache',
-        onclick: function () { API.limparCache(); recarregar(); } })
+        onclick: function () { API.limparCache(); VW.reiniciarSegmentos(); recarregar(); } })
     ]));
   }
 

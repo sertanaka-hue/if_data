@@ -84,6 +84,7 @@
   /* ---------------------------- escopo S1/S2 ----------------------------- */
 
   var cacheSegmentos = new Map();
+  var segmentacaoIndisponivel = false;   // desiste de vez, não a cada período
 
   /** Lê o segmento prudencial (S1..S5) de uma linha, se ele estiver ali. */
   function segmentoDaLinha(row) {
@@ -105,16 +106,24 @@
    */
   function carregarSegmentos(anoMes, tipo, rowsEmTela) {
     var chave = anoMes + '.' + tipo;
-    if (cacheSegmentos.has(chave)) return Promise.resolve(cacheSegmentos.get(chave));
 
     var mapa = new Map();
     (rowsEmTela || []).forEach(function (r) {
       var seg = segmentoDaLinha(r);
       if (seg) mapa.set(r.__id, seg);
     });
-    if (mapa.size) { cacheSegmentos.set(chave, mapa); return Promise.resolve(mapa); }
+    if (mapa.size) { cacheSegmentos.set(chave, Promise.resolve(mapa)); return cacheSegmentos.get(chave); }
 
-    return API.valores(anoMes, tipo, '6').then(function (d) {
+    /* O cache guarda a PROMESSA, não o mapa: assim duas telas que carregam ao
+       mesmo tempo compartilham uma única busca, em vez de cada uma disparar a
+       sua antes que a primeira registre a desistência. */
+    if (cacheSegmentos.has(chave)) return cacheSegmentos.get(chave);
+    if (segmentacaoIndisponivel) {
+      cacheSegmentos.set(chave, Promise.resolve(mapa));
+      return cacheSegmentos.get(chave);
+    }
+
+    var promessa = API.valores(anoMes, tipo, '6').then(function (d) {
       d.rows.forEach(function (r) {
         var seg = segmentoDaLinha(r);
         if (!seg) {
@@ -127,12 +136,23 @@
         }
         if (seg) mapa.set(r.__id, seg);
       });
-      cacheSegmentos.set(chave, mapa);
+      if (!mapa.size) segmentacaoIndisponivel = true;
       return mapa;
     }).catch(function () {
-      cacheSegmentos.set(chave, mapa);
+      // O relatório de Segmentação não respondeu: registra a desistência para
+      // não repetir a tentativa em cada um dos dezesseis trimestres da janela.
+      segmentacaoIndisponivel = true;
       return mapa;
     });
+
+    cacheSegmentos.set(chave, promessa);
+    return promessa;
+  }
+
+  /** Volta a permitir a busca de segmentos (chamado ao limpar o cache). */
+  function reiniciarSegmentos() {
+    cacheSegmentos.clear();
+    segmentacaoIndisponivel = false;
   }
 
   function escopoAtivo() { return ST.estado.escopoS1S2 !== false; }
@@ -295,22 +315,56 @@
   function blocoErro(node, erro) {
     U.clear(node);
     var msg = (erro && erro.message) || String(erro);
-    var provavelCORS = /Failed to fetch|NetworkError|load failed/i.test(msg);
+    var ehRede = /Failed to fetch|NetworkError|load failed/i.test(msg);
+    var eh500 = /HTTP 5\d\d/.test(msg);
+    var c = ctx();
+    var anterior = U.shiftPeriod(c.anoMes, -1);
+
+    var explicacao;
+    if (eh500) {
+      explicacao = 'O Banco Central respondeu com erro interno. Na prática isso quase sempre ' +
+        'significa que esta combinação de data-base, tipo de instituição e relatório não existe ' +
+        'na base — o serviço devolve erro em vez de uma lista vazia. Também acontece quando o ' +
+        'trimestre ainda não foi publicado.';
+    } else if (ehRede) {
+      explicacao = 'A requisição não chegou ao Banco Central. Causas comuns: rede corporativa ' +
+        'bloqueando olinda.bcb.gov.br, ou a página aberta como arquivo local.';
+    } else {
+      explicacao = null;
+    }
+
+    var acoes = [];
+    if (eh500) {
+      acoes.push(U.el('button', {
+        class: 'btn btn--primary', text: 'Tentar ' + U.periodLabel(anterior),
+        onclick: function () {
+          ST.set({ anoMes: anterior }); ST.salvarPrefs();
+          global.APP.recarregar();
+        }
+      }));
+      acoes.push(U.el('button', {
+        class: 'btn', text: 'Ver quais trimestres existem',
+        onclick: function () { global.APP.irPara('diagnostico'); }
+      }));
+    } else {
+      acoes.push(U.el('button', { class: 'btn btn--sm', text: 'Ver diagnóstico',
+        onclick: function () { global.APP.irPara('diagnostico'); } }));
+    }
+    acoes.push(U.el('button', {
+      class: 'btn', text: 'Tentar de novo',
+      onclick: function () { API.limparCache(); reiniciarSegmentos(); global.APP.recarregar(); }
+    }));
+    acoes.push(U.el('button', { class: 'btn btn--ghost', text: 'Modo demonstração',
+      onclick: function () { global.APP.definirModo('demo'); } }));
+
     node.appendChild(UI.nota([
       U.el('div', {}, [
         U.el('strong', { text: 'Não foi possível carregar os dados. ' }),
-        U.el('span', { text: msg })
+        U.el('span', { text: U.periodLong(c.anoMes) + ' · tipo ' + c.tipo + ' · relatório ' + c.relatorio })
       ]),
-      provavelCORS ? U.el('div', { class: 'small', style: 'margin-top:6px' , text:
-        'Causas comuns: rede corporativa bloqueando olinda.bcb.gov.br, proxy sem acesso externo, ' +
-        'ou a página aberta como arquivo local com bloqueio de origem. Sirva a pasta por HTTP ' +
-        '(python3 serve.py) ou aponte outra base em Diagnóstico.' }) : null,
-      U.el('div', { class: 'row', style: 'margin-top:8px' }, [
-        U.el('button', { class: 'btn btn--sm', text: 'Ver diagnóstico',
-          onclick: function () { global.APP.irPara('diagnostico'); } }),
-        U.el('button', { class: 'btn btn--sm', text: 'Usar modo demonstração',
-          onclick: function () { global.APP.definirModo('demo'); } })
-      ])
+      explicacao ? U.el('div', { class: 'small', style: 'margin-top:6px', text: explicacao }) : null,
+      U.el('div', { class: 'small muted', style: 'margin-top:6px', text: 'Resposta do servidor: ' + msg }),
+      U.el('div', { class: 'row', style: 'margin-top:10px' }, acoes)
     ], 'bad'));
   }
 
@@ -324,7 +378,7 @@
   global.VW = {
     registrar: registrar, todas: todas, ctx: ctx, novaGeracao: novaGeracao,
     segmentoDaLinha: segmentoDaLinha, carregarSegmentos: carregarSegmentos,
-    escopoAtivo: escopoAtivo, avisoEscopo: avisoEscopo,
+    escopoAtivo: escopoAtivo, avisoEscopo: avisoEscopo, reiniciarSegmentos: reiniciarSegmentos,
     carregar: carregar, carregarSerie: carregarSerie,
     ESCALAS: ESCALAS, escala: escala, valor: valor, ehRazao: ehRazao, ehContagem: ehContagem,
     fmtColuna: fmtColuna, decimaisColuna: decimaisColuna, unidadeColuna: unidadeColuna,
