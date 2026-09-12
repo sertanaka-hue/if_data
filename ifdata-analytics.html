@@ -3620,6 +3620,8 @@ table.dt td.neg { color: var(--critical); }
     modo: 'auto',            // 'auto' | 'live' | 'demo'
     demoAtivo: false,
     timeoutMs: 45000,
+    modoLeitura: null,             // 'unico' | 'paginado' — descoberto na 1ª leitura
+    erroLeituraUnica: null,
     assinaturaCadastro: null,      // índice da assinatura do cadastro que funcionou
     cadastroIndisponivel: false,   // desistência registrada, para não insistir
     erroCadastro: null,
@@ -3668,6 +3670,7 @@ table.dt td.neg { color: var(--critical); }
     state.cadastroIndisponivel = false;
     state.erroCadastro = null;
     state.assinaturaCadastro = null;
+    state.modoLeitura = null;
     podarCache(); podarCache();
     emit({ tipo: 'cache-limpo' });
   }
@@ -3719,20 +3722,48 @@ table.dt td.neg { color: var(--critical); }
       });
   }
 
-  /** Busca paginada de um recurso OData, concatenando `value`. */
+  /**
+   * Lê um recurso OData inteiro.
+   *
+   * A paginação por $skip é o parâmetro que serviços do Olinda mais recusam —
+   * e recusam com 500, não com uma mensagem clara. Por isso a leitura tenta
+   * primeiro um pedido único com $top alto e SEM $skip; só se isso falhar (ou
+   * se vier cheio, sinal de que há mais páginas) é que entra a paginação.
+   * O modo que funcionou fica guardado na sessão.
+   */
+  var TETO = 10000;
+
+  function urlCom(url, params) {
+    return url + (url.indexOf('?') >= 0 ? '&' : '?') + params;
+  }
+
+  function paginar(url, inicio, acumulado, p) {
+    var u = urlCom(url, '$top=' + PAGE + '&$skip=' + inicio + '&$format=json');
+    return getJSON(u).then(function (json) {
+      var v = (json && json.value) || [];
+      var total = acumulado.concat(v);
+      if (v.length === PAGE && p + 1 < MAX_PAGES) return paginar(url, inicio + PAGE, total, p + 1);
+      return total;
+    });
+  }
+
   function getTodos(url) {
-    var acumulado = [];
-    function pagina(skip, p) {
-      var u = url + (url.indexOf('?') >= 0 ? '&' : '?') +
-              '$top=' + PAGE + '&$skip=' + skip + '&$format=json';
-      return getJSON(u).then(function (json) {
+    if (state.modoLeitura === 'paginado') return paginar(url, 0, [], 0);
+
+    return getJSON(urlCom(url, '$top=' + TETO + '&$format=json'))
+      .then(function (json) {
         var v = (json && json.value) || [];
-        acumulado = acumulado.concat(v);
-        if (v.length === PAGE && p + 1 < MAX_PAGES) return pagina(skip + PAGE, p + 1);
-        return acumulado;
+        state.modoLeitura = 'unico';
+        // veio no teto: pode haver mais, então completa paginando a partir daí
+        if (v.length >= TETO) return paginar(url, v.length, v, 1);
+        return v;
+      })
+      .catch(function (e) {
+        // o serviço recusou o pedido único; a partir daqui a sessão usa paginação
+        state.modoLeitura = 'paginado';
+        state.erroLeituraUnica = (e && e.message) || String(e);
+        return paginar(url, 0, [], 0);
       });
-    }
-    return pagina(0, 0);
   }
 
   /* -------------------- normalização do retorno ----------------------- */
@@ -3968,6 +3999,44 @@ table.dt td.neg { color: var(--critical); }
     return getJSON(simples, 0, 25000).then(valores)
       .catch(function () { return getJSON(comTop, 0, 25000).then(valores); })
       .catch(function () { return getTodos(url); });
+  }
+
+  /**
+   * Testa formatos de consulta ao IfDataValores e devolve o que o servidor
+   * respondeu a cada um. É o que transforma "erro desconhecido" em diagnóstico.
+   */
+  function sondarValores(anoMes, tipo, relatorio) {
+    var raiz = state.base + '/IfDataValores(AnoMes=@AnoMes,TipoInstituicao=@TipoInstituicao,Relatorio=@Relatorio)';
+    function alvo(rel, ano) {
+      return raiz + '?@AnoMes=' + encodeURIComponent(ano) +
+             '&@TipoInstituicao=' + encodeURIComponent(tipo) +
+             '&@Relatorio=' + encodeURIComponent(rel);
+    }
+    var comAspas = "'" + relatorio + "'";
+    var base = alvo(comAspas, anoMes);
+    var candidatos = [
+      { rotulo: 'sem paginação', url: urlCom(base, '$top=1&$format=json') },
+      { rotulo: 'com $top apenas', url: urlCom(base, '$top=100&$format=json') },
+      { rotulo: 'com $top e $skip (paginado)', url: urlCom(base, '$top=100&$skip=0&$format=json') },
+      { rotulo: 'sem nenhum parâmetro de leitura', url: urlCom(base, '$format=json') },
+      { rotulo: 'Relatorio sem aspas', url: urlCom(alvo(relatorio, anoMes), '$top=1&$format=json') },
+      { rotulo: 'AnoMes entre aspas', url: urlCom(alvo(comAspas, "'" + anoMes + "'"), '$top=1&$format=json') }
+    ];
+
+    var resultados = [];
+    function passo(i) {
+      if (i >= candidatos.length) return Promise.resolve(resultados);
+      var c = candidatos[i];
+      return getJSON(c.url, 0, 20000, true).then(function (json) {
+        var v = (json && json.value) || [];
+        resultados.push({ rotulo: c.rotulo, url: c.url, ok: true, registros: v.length,
+                          chaves: v[0] ? Object.keys(v[0]) : [] });
+      }).catch(function (e) {
+        resultados.push({ rotulo: c.rotulo, url: c.url, ok: false,
+                          erro: (e && e.message) || String(e) });
+      }).then(function () { return passo(i + 1); });
+    }
+    return passo(0);
   }
 
   /** Testa cada assinatura com $top=1 e devolve o que cada uma respondeu. */
@@ -4263,6 +4332,7 @@ table.dt td.neg { color: var(--critical); }
     state.cadastroIndisponivel = false;
     state.erroCadastro = null;
     state.assinaturaCadastro = null;
+    state.modoLeitura = null;
     memCache.clear();
     pendentes.clear();
     emit({ tipo: 'config', state: state });
@@ -4280,6 +4350,7 @@ table.dt td.neg { color: var(--critical); }
     periodosDisponiveis: periodosDisponiveis,
     limparCache: limparCache,
     normalizar: normalizar, pareceCodigo: pareceCodigo, sondarCadastro: sondarCadastro,
+    sondarValores: sondarValores,
     urlValores: urlValores,
     urlCadastro: urlCadastro,
     on: on
@@ -4645,6 +4716,43 @@ table.dt td.neg { color: var(--critical); }
       class: 'btn', text: 'Tentar de novo',
       onclick: function () { API.limparCache(); reiniciarSegmentos(); global.APP.recarregar(); }
     }));
+    var saidaSonda = U.el('div', { style: 'margin-top:12px' });
+    acoes.push(U.el('button', {
+      class: 'btn', text: 'Testar formatos de consulta',
+      title: 'Pergunta ao Banco Central o que ele aceita, um formato por vez',
+      onclick: function () {
+        var botao = this;
+        botao.disabled = true;
+        U.clear(saidaSonda).appendChild(UI.carregando('Perguntando ao Banco Central…'));
+        API.sondarValores(c.anoMes, c.tipo, c.relatorio).then(function (res) {
+          botao.disabled = false;
+          U.clear(saidaSonda);
+          var venceu = res.find(function (r) { return r.ok && r.registros; });
+          saidaSonda.appendChild(UI.nota(venceu
+            ? 'O formato "' + venceu.rotulo + '" funcionou. Toque em "Tentar de novo".'
+            : 'Nenhum formato devolveu dados — a combinação de data-base, tipo e relatório ' +
+              'provavelmente não existe. Tire uma foto desta tela para o suporte.',
+            venceu ? 'good' : 'warn'));
+          var tab = U.el('div');
+          saidaSonda.appendChild(tab);
+          global.TBL.render(tab, {
+            columns: [
+              { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 230 },
+              { key: 'resultado', label: 'Resposta do Banco Central', largura: 440 },
+              { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 }
+            ],
+            rows: res.map(function (r) {
+              return { rotulo: r.rotulo, resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
+                       registros: r.ok ? r.registros : null };
+            }),
+            busca: false, nomeArquivo: 'sondagem-valores'
+          });
+        }).catch(function (e) {
+          botao.disabled = false;
+          U.clear(saidaSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
+        });
+      }
+    }));
     acoes.push(U.el('button', { class: 'btn btn--ghost', text: 'Modo demonstração',
       onclick: function () { global.APP.definirModo('demo'); } }));
 
@@ -4655,7 +4763,8 @@ table.dt td.neg { color: var(--critical); }
       ]),
       explicacao ? U.el('div', { class: 'small', style: 'margin-top:6px', text: explicacao }) : null,
       U.el('div', { class: 'small muted', style: 'margin-top:6px', text: 'Resposta do servidor: ' + msg }),
-      U.el('div', { class: 'row', style: 'margin-top:10px' }, acoes)
+      U.el('div', { class: 'row', style: 'margin-top:10px' }, acoes),
+      saidaSonda
     ], 'bad'));
   }
 

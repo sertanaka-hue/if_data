@@ -354,6 +354,43 @@
       class: 'btn', text: 'Tentar de novo',
       onclick: function () { API.limparCache(); reiniciarSegmentos(); global.APP.recarregar(); }
     }));
+    var saidaSonda = U.el('div', { style: 'margin-top:12px' });
+    acoes.push(U.el('button', {
+      class: 'btn', text: 'Testar formatos de consulta',
+      title: 'Pergunta ao Banco Central o que ele aceita, um formato por vez',
+      onclick: function () {
+        var botao = this;
+        botao.disabled = true;
+        U.clear(saidaSonda).appendChild(UI.carregando('Perguntando ao Banco Central…'));
+        API.sondarValores(c.anoMes, c.tipo, c.relatorio).then(function (res) {
+          botao.disabled = false;
+          U.clear(saidaSonda);
+          var venceu = res.find(function (r) { return r.ok && r.registros; });
+          saidaSonda.appendChild(UI.nota(venceu
+            ? 'O formato "' + venceu.rotulo + '" funcionou. Toque em "Tentar de novo".'
+            : 'Nenhum formato devolveu dados — a combinação de data-base, tipo e relatório ' +
+              'provavelmente não existe. Tire uma foto desta tela para o suporte.',
+            venceu ? 'good' : 'warn'));
+          var tab = U.el('div');
+          saidaSonda.appendChild(tab);
+          global.TBL.render(tab, {
+            columns: [
+              { key: 'rotulo', label: 'Formato testado', sticky: true, largura: 230 },
+              { key: 'resultado', label: 'Resposta do Banco Central', largura: 440 },
+              { key: 'registros', label: 'Registros', tipo: 'num', decimais: 0 }
+            ],
+            rows: res.map(function (r) {
+              return { rotulo: r.rotulo, resultado: r.ok ? 'OK' : (r.erro || 'falhou'),
+                       registros: r.ok ? r.registros : null };
+            }),
+            busca: false, nomeArquivo: 'sondagem-valores'
+          });
+        }).catch(function (e) {
+          botao.disabled = false;
+          U.clear(saidaSonda).appendChild(UI.nota('A sondagem não completou: ' + e.message, 'bad'));
+        });
+      }
+    }));
     acoes.push(U.el('button', { class: 'btn btn--ghost', text: 'Modo demonstração',
       onclick: function () { global.APP.definirModo('demo'); } }));
 
@@ -364,7 +401,8 @@
       ]),
       explicacao ? U.el('div', { class: 'small', style: 'margin-top:6px', text: explicacao }) : null,
       U.el('div', { class: 'small muted', style: 'margin-top:6px', text: 'Resposta do servidor: ' + msg }),
-      U.el('div', { class: 'row', style: 'margin-top:10px' }, acoes)
+      U.el('div', { class: 'row', style: 'margin-top:10px' }, acoes),
+      saidaSonda
     ], 'bad'));
   }
 
